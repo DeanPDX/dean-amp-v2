@@ -1,0 +1,53 @@
+# Build output
+build/
+cmake-build-*/
+*.log
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# JUCE
+JuceLibraryCode/
+Builds/
+
+# Compiled binaries / intermediate
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exp
+*.pdb
+*.idb
+
+# Plugin bundles (if produced outside build/)
+*.vst3/
+*.component/
+*.app/
+*.aaxplugin/
+
+# IDE / editors
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+*.user
+*.suo
+.cache/
+.clangd/
+compile_commands.json
+
+# macOS
+.DS_Store
+*.swp
+
+# Misc
+*.bak
