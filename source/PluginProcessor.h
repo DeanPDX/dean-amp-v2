@@ -60,7 +60,6 @@ private:
 
     float inputTrim { 1.0f }, outputTrim { 1.0f };
     float cabLevelGain { 1.0f };
-    bool  inputMono { false }, outputMono { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DeanAmpProcessor)
 };

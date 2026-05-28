@@ -3,7 +3,6 @@
 #include "ui/DeanLookAndFeel.h"
 #include "ui/LevelMeter.h"
 #include "ui/ToggleSwitch.h"
-#include "ui/SlideToggle.h"
 
 namespace deanamp
 {
@@ -52,10 +51,16 @@ private:
 
     // --- Switches -----------------------------------------------------------
     ToggleSwitch brightSwitch, bypassSwitch;
-    SlideToggle  inModeSwitch, outModeSwitch;
 
     // --- Meters -------------------------------------------------------------
     LevelMeter inMeter, outMeter;
+
+    // --- Bottom bar: cabinet / voicing / mic position / cab level -----------
+    juce::ComboBox cabBox, voicingBox, micBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> cabAtt, voicingAtt, micAtt;
+    juce::Slider cabLevel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> cabLevelAtt;
+    juce::Rectangle<float> cabLevelValueZone;   // normalized, for live dB readout
 
     // Click zones (normalized) for the preset stepper in the top bar.
     juce::Rectangle<float> presetPrevZone, presetNextZone;

@@ -43,6 +43,10 @@ public:
                        bool isButtonDown, int buttonX, int buttonY,
                        int buttonW, int buttonH, juce::ComboBox&) override;
 
+    void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
+                           float sliderPos, float minSliderPos, float maxSliderPos,
+                           juce::Slider::SliderStyle, juce::Slider&) override;
+
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Font getPopupMenuFont() override;

@@ -23,8 +23,6 @@ namespace pid
     static constexpr const char* mic      = "mic";
     static constexpr const char* cabBypass= "cabBypass";
     static constexpr const char* cabLevel = "cabLevel";
-    static constexpr const char* inMono   = "inputMono";
-    static constexpr const char* outMono  = "outputMono";
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayout()
@@ -75,10 +73,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayo
         ParameterID { pid::output, 1 }, "Output",
         NormalisableRange<float> (-36.0f, 12.0f, 0.1f), -3.0f,
         AudioParameterFloatAttributes().withStringFromValueFunction ([](float v, int){ return juce::String (v, 1) + " dB"; })));
-    p.push_back (std::make_unique<FParam> (
-        ParameterID { pid::mic, 1 }, "Mic", NormalisableRange<float> (0.0f, 1.0f), 0.35f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([](float v, int){
-            return v < 0.5f ? "On-Axis" : (v < 0.8f ? "Edge" : "Off-Axis"); })));
+    p.push_back (std::make_unique<CParam> (
+        ParameterID { pid::mic, 1 }, "Mic Position",
+        juce::StringArray { "Center", "Edge", "Off-Axis" }, 0));
 
     p.push_back (std::make_unique<CParam> (
         ParameterID { pid::channel, 1 }, "Channel",
@@ -92,11 +89,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayo
 
     p.push_back (std::make_unique<BParam> (ParameterID { pid::bright, 1 },    "Bright",     false));
     p.push_back (std::make_unique<BParam> (ParameterID { pid::cabBypass, 1 }, "Cab Bypass", false));
-
-    // STEREO/MONO selectors (false = STEREO, true = MONO). Input mono sums the
-    // incoming L/R before the amp; output mono sums the processed result.
-    p.push_back (std::make_unique<BParam> (ParameterID { pid::inMono, 1 },  "Input Mono",  false));
-    p.push_back (std::make_unique<BParam> (ParameterID { pid::outMono, 1 }, "Output Mono", false));
 
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::cabLevel, 1 }, "Level",
@@ -125,10 +117,14 @@ bool DeanAmpProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 void DeanAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // The amp is mono internally (input is always summed to mono, then the
+    // finished signal is broadcast to the output channels), so the whole DSP
+    // chain — including the oversamplers and the cab convolver — is prepared
+    // for a single channel.
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
     spec.maximumBlockSize = (juce::uint32) samplesPerBlock;
-    spec.numChannels      = (juce::uint32) juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels());
+    spec.numChannels      = 1;
 
     gate.prepare (sampleRate);
     preamp.prepare (spec);
@@ -152,15 +148,12 @@ void DeanAmpProcessor::updateFromParams()
     const float resoV    = apvts.getRawParameterValue (pid::resonance)->load();
     const float masterV  = apvts.getRawParameterValue (pid::master)->load();
     const float outDb    = apvts.getRawParameterValue (pid::output)->load();
-    const float micV     = apvts.getRawParameterValue (pid::mic)->load();
+    const int   micIdx   = (int) apvts.getRawParameterValue (pid::mic)->load();
     const int   chanIdx  = (int) apvts.getRawParameterValue (pid::channel)->load();
     const int   voiceIdx = (int) apvts.getRawParameterValue (pid::voicing)->load();
     const int   cabIdx   = (int) apvts.getRawParameterValue (pid::cab)->load();
     const bool  brightOn = apvts.getRawParameterValue (pid::bright)->load() > 0.5f;
     const bool  cabBy    = apvts.getRawParameterValue (pid::cabBypass)->load() > 0.5f;
-
-    inputMono  = apvts.getRawParameterValue (pid::inMono)->load()  > 0.5f;
-    outputMono = apvts.getRawParameterValue (pid::outMono)->load() > 0.5f;
 
     gate.setThresholdDb (gateDb);
     inputTrim  = juce::Decibels::decibelsToGain (inputDb);
@@ -179,8 +172,10 @@ void DeanAmpProcessor::updateFromParams()
     powerAmp.setResonance   (resoV);
     powerAmp.setMasterDrive (masterV);
 
+    // Mic position → on-axis/off-axis IR blend (Center brightest, Off-Axis darkest).
+    const float micBlend = micIdx == 0 ? 0.0f : (micIdx == 1 ? 0.6f : 1.0f);
     cab.setCabIndex (cabIdx);
-    cab.setMicBlend (micV);
+    cab.setMicBlend (micBlend);
     cab.setBypass   (cabBy);
 
     const float cabLevelDb = apvts.getRawParameterValue (pid::cabLevel)->load();
@@ -196,52 +191,53 @@ void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     updateFromParams();
 
-    // Input trim + input metering
+    const int n = buffer.getNumSamples();
+
+    // Input trim.
     buffer.applyGain (inputTrim);
 
-    // Input MONO: collapse L/R to a centred mono sum before the amp.
-    if (inputMono && numIn > 1)
+    // The amp is a mono device fed by a guitar: sum the input down to channel 0.
     {
-        const int n = buffer.getNumSamples();
-        auto* l = buffer.getWritePointer (0);
-        auto* r = buffer.getWritePointer (1);
-        for (int i = 0; i < n; ++i) { const float m = 0.5f * (l[i] + r[i]); l[i] = m; r[i] = m; }
-    }
-    {
-        const int n = buffer.getNumSamples();
-        const float peakL = buffer.getMagnitude (0, 0, n);
-        const float peakR = numIn > 1 ? buffer.getMagnitude (1, 0, n) : peakL;
-        inputMeterL.store (peakL);
-        inputMeterR.store (peakR);
+        auto* mono = buffer.getWritePointer (0);
+        for (int i = 0; i < n; ++i)
+        {
+            float s = mono[i];
+            for (int c = 1; c < numIn; ++c) s += buffer.getReadPointer (c)[i];
+            mono[i] = s / (float) juce::jmax (1, numIn);
+        }
     }
 
+    // Input metering (mono).
+    {
+        const float peak = buffer.getMagnitude (0, 0, n);
+        inputMeterL.store (peak);
+        inputMeterR.store (peak);
+    }
+
+    // Process the single mono channel through the whole chain. Doing this on one
+    // channel (rather than two identical ones) is both correct — the per-stage
+    // IIR filters keep a single state — and cheaper.
     juce::dsp::AudioBlock<float> block (buffer);
+    auto mono = block.getSingleChannelBlock (0);
 
-    gate.process     (block);
-    preamp.process   (block);
-    toneStack.process(block);
-    powerAmp.process (block);
-    cab.process      (block);
+    gate.process     (mono);
+    preamp.process   (mono);
+    toneStack.process(mono);
+    powerAmp.process (mono);
+    cab.process      (mono);
 
-    // Post-cab level + output trim
-    buffer.applyGain (cabLevelGain * outputTrim);
+    // Post-cab level + output trim (on the processed mono channel).
+    buffer.applyGain (0, 0, n, cabLevelGain * outputTrim);
 
-    // Output MONO: collapse the processed signal to mono on both channels.
-    if (outputMono && numOut > 1)
+    // Broadcast the finished mono signal to every output channel (stereo out).
+    for (int c = 1; c < numOut; ++c)
+        buffer.copyFrom (c, 0, buffer, 0, 0, n);
+
+    // Output metering.
     {
-        const int n = buffer.getNumSamples();
-        auto* l = buffer.getWritePointer (0);
-        auto* r = buffer.getWritePointer (1);
-        for (int i = 0; i < n; ++i) { const float m = 0.5f * (l[i] + r[i]); l[i] = m; r[i] = m; }
-    }
-
-    // Output metering
-    {
-        const int n = buffer.getNumSamples();
-        const float peakL = buffer.getMagnitude (0, 0, n);
-        const float peakR = numOut > 1 ? buffer.getMagnitude (1, 0, n) : peakL;
-        outputMeterL.store (peakL);
-        outputMeterR.store (peakR);
+        const float peak = buffer.getMagnitude (0, 0, n);
+        outputMeterL.store (peak);
+        outputMeterR.store (peak);
     }
 }
 

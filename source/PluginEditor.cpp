@@ -23,8 +23,6 @@ DeanAmpEditor::DeanAmpEditor (DeanAmpProcessor& p)
       proc (p),
       brightSwitch (p.apvts, "bright",     "Bright", false),
       bypassSwitch (p.apvts, "cabBypass",  "Bypass", false),
-      inModeSwitch (p.apvts, "inputMono"),
-      outModeSwitch(p.apvts, "outputMono"),
       inMeter  (p.inputMeterL,  p.inputMeterR),
       outMeter (p.outputMeterL, p.outputMeterR)
 {
@@ -72,10 +70,29 @@ DeanAmpEditor::DeanAmpEditor (DeanAmpProcessor& p)
 
     addAndMakeVisible (brightSwitch);
     addAndMakeVisible (bypassSwitch);
-    addAndMakeVisible (inModeSwitch);
-    addAndMakeVisible (outModeSwitch);
     addAndMakeVisible (inMeter);
     addAndMakeVisible (outMeter);
+
+    // Bottom bar: cabinet / voicing / mic position dropdowns. Item order MUST
+    // match each parameter's choice order in the processor.
+    auto setupBox = [this] (juce::ComboBox& box, const juce::StringArray& items)
+    {
+        box.addItemList (items, 1);
+        box.setJustificationType (juce::Justification::centredLeft);
+        addAndMakeVisible (box);
+    };
+    setupBox (cabBox,     { "4x12 Greenback", "4x12 V30", "2x12 American", "1x12 Tweed" });
+    setupBox (voicingBox, { "British", "American" });
+    setupBox (micBox,     { "Center", "Edge", "Off-Axis" });
+    cabAtt     = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "cab",     cabBox);
+    voicingAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "voicing", voicingBox);
+    micAtt     = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "mic",     micBox);
+
+    cabLevel.setSliderStyle (juce::Slider::LinearHorizontal);
+    cabLevel.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    cabLevel.onValueChange = [this] { repaint(); };
+    addAndMakeVisible (cabLevel);
+    cabLevelAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, "cabLevel", cabLevel);
 
     // Preset stepper click zones (the < and v chevrons flanking the name pill)
     presetPrevZone = { 0.330f, 0.020f, 0.030f, 0.050f };
@@ -137,13 +154,16 @@ void DeanAmpEditor::resized()
     brightSwitch.setBounds (scaledRect (0.760f - 0.020f, 0.679f, 0.040f, 0.066f));
     bypassSwitch.setBounds (scaledRect (0.799f - 0.020f, 0.679f, 0.040f, 0.066f));
 
-    // STEREO/MONO slide pills.
-    inModeSwitch .setBounds (scaledRect (0.270f - 0.018f, 0.188f, 0.036f, 0.022f));
-    outModeSwitch.setBounds (scaledRect (0.883f - 0.018f, 0.188f, 0.036f, 0.022f));
-
     // Edge level meters.
     inMeter .setBounds (scaledRect (0.0395f, 0.146f, 0.011f, 0.105f));
     outMeter.setBounds (scaledRect (0.9495f, 0.146f, 0.011f, 0.105f));
+
+    // Bottom bar: dropdowns cover their baked frames; slider covers the gold track.
+    cabBox    .setBounds (scaledRect (0.0586f, 0.8838f, 0.1745f, 0.0449f));
+    voicingBox.setBounds (scaledRect (0.2845f, 0.8838f, 0.1660f, 0.0449f));
+    micBox    .setBounds (scaledRect (0.5046f, 0.8838f, 0.1634f, 0.0449f));
+    cabLevel  .setBounds (scaledRect (0.7194f, 0.8965f, 0.1823f, 0.0234f));
+    cabLevelValueZone = { 0.900f, 0.892f, 0.058f, 0.030f };
 }
 
 void DeanAmpEditor::paint (juce::Graphics& g)
@@ -209,6 +229,18 @@ void DeanAmpEditor::paint (juce::Graphics& g)
             g.drawText (name, plate, juce::Justification::centredLeft);
         }
     }
+
+    // 3) Cab Level dB readout (bottom bar). Chip matches the panel so the baked
+    //    value underneath is hidden.
+    {
+        const float db = proc.apvts.getRawParameterValue ("cabLevel")->load();
+        const juce::String txt = juce::String (db, 1) + " dB";
+        auto r = juce::Rectangle<float> (cabLevelValueZone.getX() * W, cabLevelValueZone.getY() * H,
+                                         cabLevelValueZone.getWidth() * W, cabLevelValueZone.getHeight() * H);
+        g.setColour (juce::Colour (0xffcfd2d6));
+        g.setFont (DeanLookAndFeel::getDisplayFont (0.0145f * H, false, 0.04f));
+        g.drawText (txt, r, juce::Justification::centred);
+    }
 }
 
 void DeanAmpEditor::mouseDown (const juce::MouseEvent& e)
@@ -243,6 +275,7 @@ void DeanAmpEditor::timerCallback()
     juce::String hash = presetName();
     for (auto& k : knobs)
         hash << ':' << juce::String (proc.apvts.getRawParameterValue (k.pid)->load(), 3);
+    hash << ":cl" << juce::String (proc.apvts.getRawParameterValue ("cabLevel")->load(), 2);
 
     if (hash != lastValueHash)
     {

@@ -308,21 +308,64 @@ void DeanLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height,
                                     int /*bw*/, int /*bh*/, juce::ComboBox& box)
 {
     auto bounds = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height);
+    const float radius = juce::jmin (8.0f, height * 0.22f);
 
-    g.setColour (juce::Colour (0xff15171b));
-    g.fillRoundedRectangle (bounds.reduced (1.0f), 4.0f);
-    g.setColour (juce::Colour (0xff2a2c30));
-    g.drawRoundedRectangle (bounds.reduced (1.0f), 4.0f, 1.0f);
+    // Dark inset field (drawn opaque to cover the baked frame in the artwork)
+    juce::ColourGradient fill (juce::Colour (0xff1a1c20), bounds.getCentreX(), bounds.getY(),
+                               juce::Colour (0xff0e0f12), bounds.getCentreX(), bounds.getBottom(), false);
+    g.setGradientFill (fill);
+    g.fillRoundedRectangle (bounds, radius);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), radius, 1.0f);
+    g.setColour (juce::Colour (0xff34373e));
+    g.drawRoundedRectangle (bounds.reduced (1.0f), radius - 0.5f, 1.0f);
 
-    auto arrowArea = bounds.removeFromRight ((float) height).reduced (10.0f);
-    juce::Path tri;
-    tri.addTriangle (arrowArea.getX(), arrowArea.getY(),
-                     arrowArea.getRight(), arrowArea.getY(),
-                     arrowArea.getCentreX(), arrowArea.getBottom());
-    g.setColour (kGold);
-    g.fillPath (tri);
-
+    // Chevron (v) on the right
+    auto a = bounds.removeFromRight ((float) height).reduced (height * 0.32f);
+    const float midY = a.getCentreY() - a.getHeight() * 0.1f;
+    juce::Path chev;
+    chev.startNewSubPath (a.getX(), midY);
+    chev.lineTo (a.getCentreX(), midY + a.getHeight() * 0.45f);
+    chev.lineTo (a.getRight(), midY);
+    g.setColour (juce::Colour (0xffb8bcc4));
+    g.strokePath (chev, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
     juce::ignoreUnused (box);
+}
+
+// Horizontal slider: thin groove, gold fill up to the thumb, bright vertical thumb.
+// Matches the "CAB LEVEL" control in the bottom bar.
+void DeanLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+                                        float sliderPos, float minSliderPos, float maxSliderPos,
+                                        juce::Slider::SliderStyle style, juce::Slider& s)
+{
+    if (style != juce::Slider::LinearHorizontal && style != juce::Slider::LinearBar)
+    {
+        LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos,
+                                          minSliderPos, maxSliderPos, style, s);
+        return;
+    }
+
+    const float cy = (float) y + (float) height * 0.5f;
+    const float left = (float) x;
+    const float right = (float) x + (float) width;
+
+    // Unfilled groove
+    g.setColour (juce::Colour (0xff3a3c42));
+    g.drawLine (left, cy, right, cy, 2.0f);
+    // Filled portion (gold)
+    g.setColour (kGold);
+    g.drawLine (left, cy, sliderPos, cy, 2.6f);
+
+    // Thumb: a short bright vertical bar
+    const float th = (float) height * 0.85f;
+    auto thumb = juce::Rectangle<float> (4.0f, th).withCentre ({ sliderPos, cy });
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.fillRoundedRectangle (thumb.translated (0.0f, 1.0f), 1.5f);
+    juce::ColourGradient tg (juce::Colour (0xfff3eedd), thumb.getCentreX(), thumb.getY(),
+                             juce::Colour (0xffc9c0a6), thumb.getCentreX(), thumb.getBottom(), false);
+    g.setGradientFill (tg);
+    g.fillRoundedRectangle (thumb, 1.5f);
 }
 
 juce::Font DeanLookAndFeel::getLabelFont (juce::Label&)
