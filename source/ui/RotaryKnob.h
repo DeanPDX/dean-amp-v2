@@ -6,24 +6,28 @@ namespace deanamp
 {
 
 /**
- * A rotary knob with engraved label and a value readout that fades in while
- * the user is dragging.
+ * Rotary knob with an engraved label below.
+ * `compact = true` reduces label height for tight strips.
  */
 class RotaryKnob : public juce::Component
 {
 public:
     RotaryKnob (juce::AudioProcessorValueTreeState& s,
                 const juce::String& paramID,
-                const juce::String& labelText);
+                const juce::String& labelText,
+                bool compact = false);
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    void setLabelColour (juce::Colour c) { labelColour = c; repaint(); }
+
 private:
     juce::Slider slider;
-    juce::Label  label;
     juce::AudioProcessorValueTreeState::SliderAttachment attachment;
     juce::String caption;
+    juce::Colour labelColour { DeanLookAndFeel::kLabelText };
+    bool compactMode;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RotaryKnob)
 };

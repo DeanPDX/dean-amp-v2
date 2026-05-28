@@ -16,6 +16,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JUCE)
 
+# ----------------------------------------------------------------------------
+# Embedded image assets (photoreal amp faceplate render).
+# Generates BinaryData accessible as BinaryData::amp_face_png / _pngSize.
+# ----------------------------------------------------------------------------
+juce_add_binary_data(DeanAmpData
+    SOURCES
+        resources/amp_face.png)
+
+# Position-independent so it can link into the plugin's shared module.
+set_target_properties(DeanAmpData PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+
 juce_add_plugin(DeanAmp
     PLUGIN_MANUFACTURER_CODE Dean
     PLUGIN_CODE              Damp
@@ -45,7 +56,9 @@ target_sources(DeanAmp PRIVATE
     source/dsp/CabSim.cpp
     source/ui/DeanLookAndFeel.cpp
     source/ui/RotaryKnob.cpp
-    source/ui/LedButton.cpp
+    source/ui/LevelMeter.cpp
+    source/ui/ToggleSwitch.cpp
+    source/ui/AmpChassis.cpp
 )
 
 target_include_directories(DeanAmp PRIVATE source)
@@ -59,6 +72,7 @@ target_compile_definitions(DeanAmp PRIVATE
 )
 
 target_link_libraries(DeanAmp PRIVATE
+    DeanAmpData
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_audio_plugin_client
@@ -89,7 +103,9 @@ target_sources(DeanAmpSnapshot PRIVATE
     source/dsp/CabSim.cpp
     source/ui/DeanLookAndFeel.cpp
     source/ui/RotaryKnob.cpp
-    source/ui/LedButton.cpp
+    source/ui/LevelMeter.cpp
+    source/ui/ToggleSwitch.cpp
+    source/ui/AmpChassis.cpp
 )
 target_include_directories(DeanAmpSnapshot PRIVATE source)
 target_compile_definitions(DeanAmpSnapshot PRIVATE
@@ -99,6 +115,7 @@ target_compile_definitions(DeanAmpSnapshot PRIVATE
     JucePlugin_Build_Standalone=0
 )
 target_link_libraries(DeanAmpSnapshot PRIVATE
+    DeanAmpData
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_gui_extra
@@ -129,7 +146,9 @@ target_sources(DeanAmpToneTest PRIVATE
     source/dsp/CabSim.cpp
     source/ui/DeanLookAndFeel.cpp
     source/ui/RotaryKnob.cpp
-    source/ui/LedButton.cpp
+    source/ui/LevelMeter.cpp
+    source/ui/ToggleSwitch.cpp
+    source/ui/AmpChassis.cpp
 )
 target_include_directories(DeanAmpToneTest PRIVATE source)
 target_compile_definitions(DeanAmpToneTest PRIVATE
@@ -137,6 +156,7 @@ target_compile_definitions(DeanAmpToneTest PRIVATE
     JUCE_USE_CURL=0
 )
 target_link_libraries(DeanAmpToneTest PRIVATE
+    DeanAmpData
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_gui_basics

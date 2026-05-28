@@ -22,6 +22,9 @@ namespace pid
     static constexpr const char* cab      = "cab";
     static constexpr const char* mic      = "mic";
     static constexpr const char* cabBypass= "cabBypass";
+    static constexpr const char* cabLevel = "cabLevel";
+    static constexpr const char* inMono   = "inputMono";
+    static constexpr const char* outMono  = "outputMono";
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayout()
@@ -35,6 +38,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayo
 
     auto pct = [] (float v) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; };
     auto db  = [] (float v) { return juce::String (v, 1) + " dB"; };
+    // Amp-knob convention: show 0..10 like a real amp panel, one decimal.
+    auto ten = [] (float v) { return juce::String (v * 10.0f, 1); };
 
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::gate, 1 }, "Gate",
@@ -47,25 +52,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayo
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::gain, 1 }, "Gain",
         NormalisableRange<float> (0.0f, 1.0f), 0.55f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::bass, 1 }, "Bass",   NormalisableRange<float> (0.0f, 1.0f), 0.55f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::mid, 1 },  "Mid",    NormalisableRange<float> (0.0f, 1.0f), 0.55f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::treble, 1 }, "Treble", NormalisableRange<float> (0.0f, 1.0f), 0.60f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::presence, 1 }, "Presence", NormalisableRange<float> (0.0f, 1.0f), 0.50f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::resonance, 1 }, "Resonance", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::master, 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([pct](float v, int){ return pct(v); })));
+        AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::output, 1 }, "Output",
         NormalisableRange<float> (-36.0f, 12.0f, 0.1f), -3.0f,
@@ -88,7 +93,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayo
     p.push_back (std::make_unique<BParam> (ParameterID { pid::bright, 1 },    "Bright",     false));
     p.push_back (std::make_unique<BParam> (ParameterID { pid::cabBypass, 1 }, "Cab Bypass", false));
 
-    juce::ignoreUnused (db);
+    // STEREO/MONO selectors (false = STEREO, true = MONO). Input mono sums the
+    // incoming L/R before the amp; output mono sums the processed result.
+    p.push_back (std::make_unique<BParam> (ParameterID { pid::inMono, 1 },  "Input Mono",  false));
+    p.push_back (std::make_unique<BParam> (ParameterID { pid::outMono, 1 }, "Output Mono", false));
+
+    p.push_back (std::make_unique<FParam> (
+        ParameterID { pid::cabLevel, 1 }, "Level",
+        NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction ([](float v, int){ return juce::String (v, 1) + " dB"; })));
+
+    juce::ignoreUnused (db, pct);
     return { p.begin(), p.end() };
 }
 
@@ -144,6 +159,9 @@ void DeanAmpProcessor::updateFromParams()
     const bool  brightOn = apvts.getRawParameterValue (pid::bright)->load() > 0.5f;
     const bool  cabBy    = apvts.getRawParameterValue (pid::cabBypass)->load() > 0.5f;
 
+    inputMono  = apvts.getRawParameterValue (pid::inMono)->load()  > 0.5f;
+    outputMono = apvts.getRawParameterValue (pid::outMono)->load() > 0.5f;
+
     gate.setThresholdDb (gateDb);
     inputTrim  = juce::Decibels::decibelsToGain (inputDb);
     outputTrim = juce::Decibels::decibelsToGain (outDb);
@@ -164,6 +182,9 @@ void DeanAmpProcessor::updateFromParams()
     cab.setCabIndex (cabIdx);
     cab.setMicBlend (micV);
     cab.setBypass   (cabBy);
+
+    const float cabLevelDb = apvts.getRawParameterValue (pid::cabLevel)->load();
+    cabLevelGain = juce::Decibels::decibelsToGain (cabLevelDb);
 }
 
 void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -175,8 +196,24 @@ void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     updateFromParams();
 
-    // Input trim
+    // Input trim + input metering
     buffer.applyGain (inputTrim);
+
+    // Input MONO: collapse L/R to a centred mono sum before the amp.
+    if (inputMono && numIn > 1)
+    {
+        const int n = buffer.getNumSamples();
+        auto* l = buffer.getWritePointer (0);
+        auto* r = buffer.getWritePointer (1);
+        for (int i = 0; i < n; ++i) { const float m = 0.5f * (l[i] + r[i]); l[i] = m; r[i] = m; }
+    }
+    {
+        const int n = buffer.getNumSamples();
+        const float peakL = buffer.getMagnitude (0, 0, n);
+        const float peakR = numIn > 1 ? buffer.getMagnitude (1, 0, n) : peakL;
+        inputMeterL.store (peakL);
+        inputMeterR.store (peakR);
+    }
 
     juce::dsp::AudioBlock<float> block (buffer);
 
@@ -186,8 +223,26 @@ void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     powerAmp.process (block);
     cab.process      (block);
 
-    // Output trim
-    buffer.applyGain (outputTrim);
+    // Post-cab level + output trim
+    buffer.applyGain (cabLevelGain * outputTrim);
+
+    // Output MONO: collapse the processed signal to mono on both channels.
+    if (outputMono && numOut > 1)
+    {
+        const int n = buffer.getNumSamples();
+        auto* l = buffer.getWritePointer (0);
+        auto* r = buffer.getWritePointer (1);
+        for (int i = 0; i < n; ++i) { const float m = 0.5f * (l[i] + r[i]); l[i] = m; r[i] = m; }
+    }
+
+    // Output metering
+    {
+        const int n = buffer.getNumSamples();
+        const float peakL = buffer.getMagnitude (0, 0, n);
+        const float peakR = numOut > 1 ? buffer.getMagnitude (1, 0, n) : peakL;
+        outputMeterL.store (peakL);
+        outputMeterR.store (peakR);
+    }
 }
 
 juce::AudioProcessorEditor* DeanAmpProcessor::createEditor()

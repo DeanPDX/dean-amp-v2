@@ -4,18 +4,6 @@
 namespace deanamp
 {
 
-/**
- * Custom LookAndFeel for Dean Amp. Aims for the NeuralDSP "premium plugin" feel:
- *
- *   - Dark, near-black base with a subtle vertical brushed-metal sheen
- *   - Anodized accent (deep crimson) for active LEDs and the indicator arc
- *   - Knobs have:
- *       * a recessed shadow well underneath
- *       * a machined-aluminum body with a soft radial highlight
- *       * a glowing crimson arc showing the current value
- *       * a thin engraved indicator line on top
- *   - Sharp, condensed typography for labels
- */
 class DeanLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -31,6 +19,14 @@ public:
     static const juce::Colour kEdgeShadow;
     static const juce::Colour kAccentCrimson;
     static const juce::Colour kAccentGlow;
+    static const juce::Colour kAccentAmber;     // signal-chain "active" glow
+    static const juce::Colour kAccentTeal;      // signal-chain "module" glow
+    static const juce::Colour kGold;            // amp piping / plaque
+    static const juce::Colour kGoldDark;
+    static const juce::Colour kGoldHighlight;
+    static const juce::Colour kTolex;           // amp covering
+    static const juce::Colour kTolexHighlight;
+    static const juce::Colour kFaceplate;       // amp faceplate background
     static const juce::Colour kLabelText;
     static const juce::Colour kLabelDim;
 
@@ -51,13 +47,27 @@ public:
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Font getPopupMenuFont() override;
 
-    // Helpers used by the editor
+    // Drawing helpers
     static void drawBrushedMetalPanel (juce::Graphics& g, juce::Rectangle<float> r,
                                        juce::Colour top, juce::Colour bottom,
                                        float cornerRadius = 6.0f);
+
     static void drawEngravedText (juce::Graphics& g, const juce::String& text,
                                   juce::Rectangle<float> bounds, juce::Font font,
-                                  juce::Justification just = juce::Justification::centred);
+                                  juce::Justification just = juce::Justification::centred,
+                                  juce::Colour baseColour = juce::Colour (0xffe6e8ec));
+
+    static void drawTolexPanel (juce::Graphics& g, juce::Rectangle<float> r,
+                                float cornerRadius = 14.0f);
+
+    static void drawGoldPiping (juce::Graphics& g, juce::Rectangle<float> r,
+                                float cornerRadius, float thickness);
+
+    static void drawGoldPlaque (juce::Graphics& g, juce::Rectangle<float> r,
+                                const juce::String& text);
+
+    static juce::Font getDisplayFont (float size, bool bold = true,
+                                      float kerning = 0.0f);
 };
 
 } // namespace deanamp

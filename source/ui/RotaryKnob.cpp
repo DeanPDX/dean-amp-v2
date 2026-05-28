@@ -5,12 +5,15 @@ namespace deanamp
 
 RotaryKnob::RotaryKnob (juce::AudioProcessorValueTreeState& s,
                         const juce::String& paramID,
-                        const juce::String& labelText)
+                        const juce::String& labelText,
+                        bool compact)
     : attachment (s, paramID, slider),
-      caption (labelText.toUpperCase())
+      caption (labelText.toUpperCase()),
+      compactMode (compact)
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 14);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false,
+                            compact ? 56 : 70, compact ? 12 : 14);
     slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f,
                                 juce::MathConstants<float>::pi * 2.75f, true);
     slider.setColour (juce::Slider::textBoxTextColourId, DeanLookAndFeel::kLabelDim);
@@ -22,15 +25,18 @@ RotaryKnob::RotaryKnob (juce::AudioProcessorValueTreeState& s,
 void RotaryKnob::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    auto labelBounds = bounds.removeFromBottom (16.0f);
+    const float labelH = compactMode ? 12.0f : 14.0f;
+    auto labelBounds = bounds.removeFromTop (labelH);
     DeanLookAndFeel::drawEngravedText (g, caption, labelBounds,
-        juce::Font (juce::FontOptions (11.0f).withStyle ("Bold")));
+        DeanLookAndFeel::getDisplayFont (compactMode ? 9.5f : 10.5f, true, 0.18f),
+        juce::Justification::centred, labelColour);
 }
 
 void RotaryKnob::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromBottom (16); // engraved label area
+    const int labelH = compactMode ? 12 : 14;
+    bounds.removeFromTop (labelH);
     slider.setBounds (bounds);
 }
 

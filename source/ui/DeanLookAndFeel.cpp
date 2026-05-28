@@ -4,208 +4,286 @@ namespace deanamp
 {
 
 const juce::Colour DeanLookAndFeel::kPanelBlack     { 0xff0a0a0c };
-const juce::Colour DeanLookAndFeel::kPanelTop       { 0xff1d1f23 };
-const juce::Colour DeanLookAndFeel::kPanelBottom    { 0xff0d0e10 };
+const juce::Colour DeanLookAndFeel::kPanelTop       { 0xff15171b };
+const juce::Colour DeanLookAndFeel::kPanelBottom    { 0xff060708 };
 const juce::Colour DeanLookAndFeel::kMetalDark      { 0xff15171b };
 const juce::Colour DeanLookAndFeel::kMetalLight     { 0xff2c2f35 };
 const juce::Colour DeanLookAndFeel::kEdgeShadow     { 0xff000000 };
 const juce::Colour DeanLookAndFeel::kAccentCrimson  { 0xffd9203b };
 const juce::Colour DeanLookAndFeel::kAccentGlow     { 0xffff5a6e };
+const juce::Colour DeanLookAndFeel::kAccentAmber    { 0xffe2a23a };
+const juce::Colour DeanLookAndFeel::kAccentTeal     { 0xff3ad2c4 };
+const juce::Colour DeanLookAndFeel::kGold           { 0xffc6a464 };
+const juce::Colour DeanLookAndFeel::kGoldDark       { 0xff6e5836 };
+const juce::Colour DeanLookAndFeel::kGoldHighlight  { 0xfff0d690 };
+const juce::Colour DeanLookAndFeel::kTolex          { 0xff111114 };
+const juce::Colour DeanLookAndFeel::kTolexHighlight { 0xff1a1a1e };
+const juce::Colour DeanLookAndFeel::kFaceplate      { 0xff14151a };
 const juce::Colour DeanLookAndFeel::kLabelText      { 0xffe6e8ec };
-const juce::Colour DeanLookAndFeel::kLabelDim       { 0xff7a7e86 };
+const juce::Colour DeanLookAndFeel::kLabelDim       { 0xff8e9099 };
 
 DeanLookAndFeel::DeanLookAndFeel()
 {
     setColour (juce::ResizableWindow::backgroundColourId, kPanelBlack);
-    setColour (juce::Slider::textBoxTextColourId,         kLabelText);
+    setColour (juce::Slider::textBoxTextColourId,         kLabelDim);
     setColour (juce::Slider::textBoxBackgroundColourId,   juce::Colours::transparentBlack);
     setColour (juce::Slider::textBoxOutlineColourId,      juce::Colours::transparentBlack);
     setColour (juce::Label::textColourId,                 kLabelText);
-    setColour (juce::ComboBox::backgroundColourId,        kMetalDark);
+    setColour (juce::ComboBox::backgroundColourId,        juce::Colour (0xff1a1c20));
     setColour (juce::ComboBox::textColourId,              kLabelText);
-    setColour (juce::ComboBox::outlineColourId,           kMetalLight);
-    setColour (juce::ComboBox::arrowColourId,             kAccentCrimson);
+    setColour (juce::ComboBox::outlineColourId,           juce::Colour (0xff2a2c30));
+    setColour (juce::ComboBox::arrowColourId,             kGold);
     setColour (juce::PopupMenu::backgroundColourId,       kPanelBlack);
     setColour (juce::PopupMenu::textColourId,             kLabelText);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, kAccentCrimson.withAlpha (0.4f));
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, kGold.withAlpha (0.40f));
     setColour (juce::PopupMenu::highlightedTextColourId,  juce::Colours::white);
+}
+
+juce::Font DeanLookAndFeel::getDisplayFont (float size, bool bold, float kerning)
+{
+    auto opts = juce::FontOptions (size);
+    if (bold) opts = opts.withStyle ("Bold");
+    auto f = juce::Font (opts);
+    if (kerning != 0.0f) f = f.withExtraKerningFactor (kerning);
+    return f;
 }
 
 void DeanLookAndFeel::drawBrushedMetalPanel (juce::Graphics& g, juce::Rectangle<float> r,
                                              juce::Colour top, juce::Colour bottom,
                                              float cornerRadius)
 {
-    // Base vertical gradient
     juce::ColourGradient grad (top, r.getX(), r.getY(), bottom, r.getX(), r.getBottom(), false);
     g.setGradientFill (grad);
     g.fillRoundedRectangle (r, cornerRadius);
 
-    // Brushed lines — subtle horizontal noise
     juce::Random rng (1234);
-    g.setColour (juce::Colour (0xff000000).withAlpha (0.06f));
+    g.setColour (juce::Colour (0xff000000).withAlpha (0.05f));
     for (int y = (int) r.getY(); y < (int) r.getBottom(); y += 2)
     {
         const float jitter = rng.nextFloat() * 0.6f;
         g.drawHorizontalLine (y, r.getX() + jitter, r.getRight() - jitter);
     }
 
-    // Inner highlight rim
-    g.setColour (juce::Colours::white.withAlpha (0.06f));
+    g.setColour (juce::Colours::white.withAlpha (0.05f));
     g.drawRoundedRectangle (r.reduced (0.75f), cornerRadius - 0.5f, 0.75f);
-
-    // Outer shadow edge
     g.setColour (juce::Colours::black.withAlpha (0.45f));
-    g.drawRoundedRectangle (r.reduced (0.0f), cornerRadius, 1.0f);
+    g.drawRoundedRectangle (r, cornerRadius, 1.0f);
 }
 
 void DeanLookAndFeel::drawEngravedText (juce::Graphics& g, const juce::String& text,
                                         juce::Rectangle<float> bounds, juce::Font font,
-                                        juce::Justification just)
+                                        juce::Justification just, juce::Colour baseColour)
 {
     g.setFont (font);
-    // Engraved effect: dark shadow above, light highlight below
     g.setColour (juce::Colours::black.withAlpha (0.75f));
     g.drawText (text, bounds.translated (0.0f, -1.0f), just);
     g.setColour (juce::Colours::white.withAlpha (0.10f));
     g.drawText (text, bounds.translated (0.0f, 1.0f), just);
-    g.setColour (kLabelText);
+    g.setColour (baseColour);
     g.drawText (text, bounds, just);
 }
 
+// "Tolex" panel — black leather-look amp covering rendered with a fine cross-hatch.
+void DeanLookAndFeel::drawTolexPanel (juce::Graphics& g, juce::Rectangle<float> r,
+                                      float cornerRadius)
+{
+    // Base
+    juce::ColourGradient grad (kTolexHighlight, r.getCentreX(), r.getY(),
+                               kTolex,          r.getCentreX(), r.getBottom(), false);
+    g.setGradientFill (grad);
+    g.fillRoundedRectangle (r, cornerRadius);
+
+    // Faux-leather noise: small dark + light specks
+    juce::Random rng (8675309);
+    juce::Path p;
+    g.saveState();
+    g.reduceClipRegion (r.toNearestInt());
+    for (int i = 0; i < 4000; ++i)
+    {
+        const float x = r.getX() + rng.nextFloat() * r.getWidth();
+        const float y = r.getY() + rng.nextFloat() * r.getHeight();
+        const float a = 0.04f + rng.nextFloat() * 0.10f;
+        g.setColour (juce::Colour (0xff000000).withAlpha (a));
+        g.fillRect (x, y, 1.0f, 1.0f);
+    }
+    for (int i = 0; i < 800; ++i)
+    {
+        const float x = r.getX() + rng.nextFloat() * r.getWidth();
+        const float y = r.getY() + rng.nextFloat() * r.getHeight();
+        const float a = 0.02f + rng.nextFloat() * 0.06f;
+        g.setColour (juce::Colours::white.withAlpha (a));
+        g.fillRect (x, y, 1.0f, 1.0f);
+    }
+    g.restoreState();
+
+    // Soft vertical vignette
+    juce::ColourGradient vig (juce::Colours::transparentBlack, r.getCentreX(), r.getCentreY(),
+                              juce::Colours::black.withAlpha (0.35f), r.getX(), r.getBottom(), true);
+    vig.isRadial = true;
+    g.setGradientFill (vig);
+    g.fillRoundedRectangle (r, cornerRadius);
+}
+
+// Gold piping: a thin gold rounded outline with light/dark sides for depth.
+void DeanLookAndFeel::drawGoldPiping (juce::Graphics& g, juce::Rectangle<float> r,
+                                      float cornerRadius, float thickness)
+{
+    // Outer dark edge
+    g.setColour (kGoldDark);
+    g.drawRoundedRectangle (r, cornerRadius, thickness + 1.0f);
+    // Gold core
+    g.setColour (kGold);
+    g.drawRoundedRectangle (r, cornerRadius, thickness);
+    // Bright highlight on top-left
+    g.setColour (kGoldHighlight.withAlpha (0.6f));
+    juce::Path hi;
+    hi.startNewSubPath (r.getX() + cornerRadius, r.getY() + thickness * 0.5f);
+    hi.lineTo (r.getRight() - cornerRadius, r.getY() + thickness * 0.5f);
+    g.strokePath (hi, juce::PathStrokeType (0.8f));
+}
+
+// Gold "DEAN AMP" engraved plaque.
+void DeanLookAndFeel::drawGoldPlaque (juce::Graphics& g, juce::Rectangle<float> r,
+                                      const juce::String& text)
+{
+    // Subtle dark inset background
+    g.setColour (juce::Colour (0xff080808));
+    g.fillRoundedRectangle (r.expanded (4.0f, 2.0f), 4.0f);
+
+    // Gold border first (outer dark, gold core, highlight)
+    drawGoldPiping (g, r, 4.0f, 1.6f);
+
+    // Inside fill — very subtle gradient suggesting brushed brass behind cutout text
+    juce::ColourGradient plate (juce::Colour (0xff090909), r.getCentreX(), r.getY(),
+                                juce::Colour (0xff050505), r.getCentreX(), r.getBottom(), false);
+    g.setGradientFill (plate);
+    g.fillRoundedRectangle (r.reduced (3.0f), 3.0f);
+
+    // Engraved gold text with deep shadow + highlight
+    auto f = getDisplayFont (r.getHeight() * 0.55f, true, 0.18f);
+    g.setFont (f);
+    g.setColour (juce::Colours::black.withAlpha (0.85f));
+    g.drawText (text, r.translated (0.0f, -1.5f), juce::Justification::centred);
+    g.setColour (kGoldHighlight.withAlpha (0.20f));
+    g.drawText (text, r.translated (0.0f, 1.5f), juce::Justification::centred);
+    g.setColour (kGold);
+    g.drawText (text, r, juce::Justification::centred);
+}
+
+// Modern amp-head knob: a dark machined cylinder with a thin pointer line and a
+// faint ring of tick dots — matching the photoreal faceplate render. Painted
+// fully opaque so it cleanly covers the knob baked into the background image.
 void DeanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                         float sliderPos, float rotaryStart, float rotaryEnd,
                                         juce::Slider& s)
 {
-    auto area = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (4.0f);
+    auto area = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (2.0f);
     const float diameter = juce::jmin (area.getWidth(), area.getHeight());
     auto knobArea = juce::Rectangle<float> (diameter, diameter).withCentre (area.getCentre());
 
-    const float angle = rotaryStart + sliderPos * (rotaryEnd - rotaryStart);
-    auto centre = knobArea.getCentre();
+    const float angle  = rotaryStart + sliderPos * (rotaryEnd - rotaryStart);
+    const auto  centre = knobArea.getCentre();
     const float radius = diameter * 0.5f;
 
-    // --- 1) Outer recessed well (drop shadow into the panel) ---
+    // --- 1) Faint tick dots around the perimeter (engraved into the faceplate) ---
     {
-        auto well = knobArea.expanded (3.0f);
-        juce::DropShadow ds (juce::Colours::black.withAlpha (0.65f), 8, { 0, 2 });
-        juce::Path p; p.addEllipse (well);
+        const float tickR = radius + diameter * 0.10f;
+        const int numTicks = 11;
+        for (int i = 0; i < numTicks; ++i)
+        {
+            const float t  = (float) i / (float) (numTicks - 1);
+            const float a  = rotaryStart + t * (rotaryEnd - rotaryStart);
+            const float ca = std::cos (a - juce::MathConstants<float>::halfPi);
+            const float sa = std::sin (a - juce::MathConstants<float>::halfPi);
+            const float dotR = (i == 0 || i == numTicks - 1) ? 1.3f : 0.9f;
+            auto dot = juce::Rectangle<float> (dotR * 2.0f, dotR * 2.0f)
+                          .withCentre ({ centre.x + ca * tickR, centre.y + sa * tickR });
+            g.setColour (juce::Colour (0xff4a4c52).withAlpha (0.65f));
+            g.fillEllipse (dot);
+        }
+    }
+
+    // --- 2) Recessed well shadow beneath the knob ---
+    {
+        juce::DropShadow ds (juce::Colours::black.withAlpha (0.75f), 9, { 0, 3 });
+        juce::Path p; p.addEllipse (knobArea.expanded (1.5f));
         ds.drawForPath (g, p);
-        g.setColour (juce::Colour (0xff050608));
-        g.fillEllipse (well);
     }
 
-    // --- 2) Glow arc behind the knob (showing value) ---
+    // --- 3) Outer rim ring (thin brushed bezel) ---
+    auto body = knobArea.reduced (diameter * 0.04f);
     {
-        auto arcBounds = knobArea.expanded (-1.0f);
-        const float arcR = arcBounds.getWidth() * 0.5f;
-        juce::Path bgArc, valArc;
-        bgArc.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f,
-                             rotaryStart, rotaryEnd, true);
-        valArc.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f,
-                              rotaryStart, angle, true);
-
-        g.setColour (juce::Colour (0xff202428));
-        g.strokePath (bgArc, juce::PathStrokeType (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-        // Glow underlay
-        g.setColour (kAccentGlow.withAlpha (0.30f));
-        g.strokePath (valArc, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        // Bright core
-        g.setColour (kAccentCrimson);
-        g.strokePath (valArc, juce::PathStrokeType (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        juce::ColourGradient ring (juce::Colour (0xff3c3e44), body.getCentreX(), body.getY(),
+                                   juce::Colour (0xff0a0b0d), body.getCentreX(), body.getBottom(), false);
+        g.setGradientFill (ring);
+        g.fillEllipse (knobArea);
     }
 
-    // --- 3) Knob body (machined aluminum) ---
-    auto knobBody = knobArea.reduced (diameter * 0.18f);
+    // --- 4) Knob body: domed matte black with a top-down highlight ---
+    body = knobArea.reduced (diameter * 0.10f);
     {
-        // Base gradient (top highlight to bottom shadow)
-        juce::ColourGradient grad (juce::Colour (0xff3b3f47), knobBody.getCentreX(), knobBody.getY(),
-                                   juce::Colour (0xff14161a), knobBody.getCentreX(), knobBody.getBottom(), false);
+        // Base vertical gradient (top lighter, bottom near-black)
+        juce::ColourGradient grad (juce::Colour (0xff242730), body.getCentreX(), body.getY(),
+                                   juce::Colour (0xff080a0d), body.getCentreX(), body.getBottom(), false);
         g.setGradientFill (grad);
-        g.fillEllipse (knobBody);
+        g.fillEllipse (body);
 
-        // Concentric machined-circle texture
-        g.setColour (juce::Colours::white.withAlpha (0.04f));
-        for (int i = 1; i <= 6; ++i)
-            g.drawEllipse (knobBody.reduced ((float) i * (knobBody.getWidth() * 0.02f)), 0.6f);
+        // Domed radial highlight near the top
+        juce::ColourGradient dome (juce::Colours::white.withAlpha (0.18f),
+                                   body.getCentreX(), body.getY() + body.getHeight() * 0.26f,
+                                   juce::Colours::transparentBlack,
+                                   body.getCentreX(), body.getCentreY() + body.getHeight() * 0.10f, true);
+        dome.isRadial = true;
+        g.setGradientFill (dome);
+        g.fillEllipse (body);
 
-        // Radial inner highlight
-        juce::ColourGradient rg (juce::Colours::white.withAlpha (0.20f),
-                                 knobBody.getCentreX(), knobBody.getY() + knobBody.getHeight() * 0.25f,
-                                 juce::Colours::transparentBlack,
-                                 knobBody.getCentreX(), knobBody.getCentreY(),
-                                 true);
-        rg.isRadial = true;
-        g.setGradientFill (rg);
-        g.fillEllipse (knobBody);
-
-        // Outer rim
-        g.setColour (juce::Colours::black.withAlpha (0.7f));
-        g.drawEllipse (knobBody, 1.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.10f));
-        g.drawEllipse (knobBody.reduced (1.0f), 0.6f);
+        // Crisp dark edge + faint inner highlight ring
+        g.setColour (juce::Colours::black.withAlpha (0.85f));
+        g.drawEllipse (body, 1.2f);
+        g.setColour (juce::Colours::white.withAlpha (0.06f));
+        g.drawEllipse (body.reduced (1.6f), 0.8f);
     }
 
-    // --- 4) Indicator line ---
+    // --- 5) Pointer line (thin bright indicator from mid-radius to the rim) ---
     {
-        const float indLen = radius * 0.55f;
-        const float indStart = radius * 0.25f;
-        juce::Path indicator;
-        indicator.startNewSubPath (0.0f, -indStart);
-        indicator.lineTo (0.0f, -indLen);
-        const float thickness = juce::jmax (2.0f, radius * 0.06f);
+        const float r0 = radius * 0.30f;
+        const float r1 = radius * 0.80f;
+        const float ca = std::cos (angle - juce::MathConstants<float>::halfPi);
+        const float sa = std::sin (angle - juce::MathConstants<float>::halfPi);
+        const juce::Point<float> p0 { centre.x + ca * r0, centre.y + sa * r0 };
+        const juce::Point<float> p1 { centre.x + ca * r1, centre.y + sa * r1 };
 
-        juce::AffineTransform tr = juce::AffineTransform::rotation (angle)
-                                       .translated (centre.x, centre.y);
-
-        // Glow under indicator
-        g.setColour (kAccentGlow.withAlpha (0.55f));
-        g.strokePath (indicator, juce::PathStrokeType (thickness + 2.0f,
-                                                       juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded),
-                      tr);
-        // Core indicator
-        g.setColour (juce::Colours::white.withAlpha (0.95f));
-        g.strokePath (indicator, juce::PathStrokeType (thickness,
-                                                       juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded),
-                      tr);
-    }
-
-    // --- 5) Centre dot ---
-    {
-        const float r2 = diameter * 0.04f;
-        g.setColour (juce::Colours::black);
-        g.fillEllipse (juce::Rectangle<float> (r2 * 2.0f, r2 * 2.0f).withCentre (centre));
+        // Shadow underline
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.drawLine (p0.x, p0.y + 1.0f, p1.x, p1.y + 1.0f, 2.6f);
+        // Bright indicator
+        g.setColour (juce::Colour (0xffe9e3d4));
+        g.drawLine (p0.x, p0.y, p1.x, p1.y, 2.2f);
     }
 
     juce::ignoreUnused (s);
 }
 
+// Toggle = small LED + label (used for in-line toggles).
 void DeanLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
                                         bool /*hi*/, bool /*down*/)
 {
     auto bounds = b.getLocalBounds().toFloat().reduced (2.0f);
-
-    // LED area on left, label on right
     auto ledArea = bounds.removeFromLeft (bounds.getHeight()).reduced (3.0f);
     const bool on = b.getToggleState();
 
-    // LED bezel
     g.setColour (juce::Colour (0xff05060a));
     g.fillEllipse (ledArea);
     g.setColour (juce::Colours::black.withAlpha (0.8f));
     g.drawEllipse (ledArea, 1.0f);
 
-    // LED itself
     auto inner = ledArea.reduced (3.0f);
     if (on)
     {
-        // Glow halo
-        g.setColour (DeanLookAndFeel::kAccentGlow.withAlpha (0.55f));
+        g.setColour (kAccentGlow.withAlpha (0.55f));
         g.fillEllipse (ledArea.expanded (4.0f));
         juce::ColourGradient rg (juce::Colour (0xffffd5dc), inner.getCentreX(), inner.getCentreY(),
-                                 DeanLookAndFeel::kAccentCrimson, inner.getRight(), inner.getBottom(), true);
+                                 kAccentCrimson, inner.getRight(), inner.getBottom(), true);
         rg.isRadial = true;
         g.setGradientFill (rg);
         g.fillEllipse (inner);
@@ -219,10 +297,9 @@ void DeanLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b
         g.fillEllipse (inner);
     }
 
-    // Label
     bounds.removeFromLeft (6.0f);
-    g.setColour (on ? DeanLookAndFeel::kLabelText : DeanLookAndFeel::kLabelDim);
-    g.setFont (juce::Font (juce::FontOptions (12.0f).withStyle ("Bold")));
+    g.setColour (on ? kLabelText : kLabelDim);
+    g.setFont (getDisplayFont (11.0f));
     g.drawText (b.getButtonText().toUpperCase(), bounds, juce::Justification::centredLeft);
 }
 
@@ -232,15 +309,17 @@ void DeanLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height,
 {
     auto bounds = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height);
 
-    drawBrushedMetalPanel (g, bounds.reduced (1.0f), kMetalLight, kMetalDark, 4.0f);
+    g.setColour (juce::Colour (0xff15171b));
+    g.fillRoundedRectangle (bounds.reduced (1.0f), 4.0f);
+    g.setColour (juce::Colour (0xff2a2c30));
+    g.drawRoundedRectangle (bounds.reduced (1.0f), 4.0f, 1.0f);
 
-    // Arrow
     auto arrowArea = bounds.removeFromRight ((float) height).reduced (10.0f);
     juce::Path tri;
     tri.addTriangle (arrowArea.getX(), arrowArea.getY(),
                      arrowArea.getRight(), arrowArea.getY(),
                      arrowArea.getCentreX(), arrowArea.getBottom());
-    g.setColour (kAccentCrimson);
+    g.setColour (kGold);
     g.fillPath (tri);
 
     juce::ignoreUnused (box);
@@ -248,17 +327,17 @@ void DeanLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height,
 
 juce::Font DeanLookAndFeel::getLabelFont (juce::Label&)
 {
-    return juce::Font (juce::FontOptions (12.0f).withStyle ("Bold"));
+    return getDisplayFont (12.0f, true);
 }
 
 juce::Font DeanLookAndFeel::getComboBoxFont (juce::ComboBox&)
 {
-    return juce::Font (juce::FontOptions (13.0f).withStyle ("Bold"));
+    return getDisplayFont (12.0f, true);
 }
 
 juce::Font DeanLookAndFeel::getPopupMenuFont()
 {
-    return juce::Font (juce::FontOptions (13.0f));
+    return getDisplayFont (12.5f, false);
 }
 
 } // namespace deanamp

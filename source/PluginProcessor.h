@@ -43,6 +43,10 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
+    // Level metering (read by the editor on a timer). Linear 0..1+ peak per block.
+    std::atomic<float> inputMeterL  { 0.0f }, inputMeterR  { 0.0f };
+    std::atomic<float> outputMeterL { 0.0f }, outputMeterR { 0.0f };
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
 private:
@@ -55,6 +59,8 @@ private:
     CabSim      cab;
 
     float inputTrim { 1.0f }, outputTrim { 1.0f };
+    float cabLevelGain { 1.0f };
+    bool  inputMono { false }, outputMono { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DeanAmpProcessor)
 };
