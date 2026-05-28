@@ -27,6 +27,17 @@ juce_add_binary_data(DeanAmpData
 # Position-independent so it can link into the plugin's shared module.
 set_target_properties(DeanAmpData PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
+# Auto-copy the built plugin into the system plugin folder after each build.
+# On macOS that folder (~/Library/Audio/Plug-Ins) is user-writable, so it's
+# convenient. On Windows the system VST3 dir lives under Program Files and needs
+# admin — a post-build copy there would FAIL the build when not elevated, so we
+# disable it and let build-windows.ps1 perform the (elevated) install instead.
+if(APPLE)
+    set(DEANAMP_COPY_AFTER_BUILD TRUE)
+else()
+    set(DEANAMP_COPY_AFTER_BUILD FALSE)
+endif()
+
 juce_add_plugin(DeanAmp
     PLUGIN_MANUFACTURER_CODE Dean
     PLUGIN_CODE              Damp
@@ -39,7 +50,7 @@ juce_add_plugin(DeanAmp
     NEEDS_MIDI_OUTPUT        FALSE
     IS_MIDI_EFFECT           FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD  TRUE
+    COPY_PLUGIN_AFTER_BUILD  ${DEANAMP_COPY_AFTER_BUILD}
     VST3_CATEGORIES          "Fx|Distortion"
     AU_MAIN_TYPE             "kAudioUnitType_Effect"
 )
