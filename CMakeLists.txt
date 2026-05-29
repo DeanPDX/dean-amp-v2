@@ -207,6 +207,7 @@ target_include_directories(DeanAmpDiTest PRIVATE source)
 target_compile_definitions(DeanAmpDiTest PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    DEANAMP_DI_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/di-single-coil-strat-bridge-pickup.wav"
 )
 target_link_libraries(DeanAmpDiTest PRIVATE
     DeanAmpData

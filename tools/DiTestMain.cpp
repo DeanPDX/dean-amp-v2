@@ -79,8 +79,27 @@ namespace
             par->setValueNotifyingHost (norm);
     }
 
-    void runChannel (deanamp::DeanAmpProcessor& p, int chan, const char* label,
-                     const juce::AudioBuffer<float>& di, const juce::File& outDir)
+    struct ChannelStats { float peakDbV, activeRmsDb, corr; bool sane; };
+
+    // RMS of the "played" portion only (samples above -45 dBFS), so silent gaps
+    // between phrases don't skew the loudness measure — that's the metric that
+    // actually reflects perceived level while playing.
+    float activeRmsDb (const juce::AudioBuffer<float>& b)
+    {
+        const float thr = juce::Decibels::decibelsToGain (-45.0f);
+        double sum = 0.0; long long cnt = 0;
+        for (int ch = 0; ch < b.getNumChannels(); ++ch)
+            for (int i = 0; i < b.getNumSamples(); ++i)
+            {
+                const float v = b.getSample (ch, i);
+                if (std::abs (v) > thr) { sum += v * (double) v; ++cnt; }
+            }
+        return cnt > 0 ? (float) juce::Decibels::gainToDecibels (std::sqrt (sum / (double) cnt), -120.0)
+                       : -120.0f;
+    }
+
+    ChannelStats runChannel (deanamp::DeanAmpProcessor& p, int chan, const char* label,
+                             const juce::AudioBuffer<float>& di, const juce::File& outDir)
     {
         // Neutral settings: knobs at noon, gate open, unity output.
         setChoice (p, "channel", chan);
@@ -117,9 +136,10 @@ namespace
         for (int i = 0; i < N; ++i) { float L=buf.getSample(0,i),R=buf.getSample(1,i); sLL+=L*L; sRR+=R*R; sLR+=L*R; }
         const double corr = sLR / (std::sqrt(sLL*sRR)+1e-12);
 
+        const float aRms = activeRmsDb (buf);
         std::cout << juce::String (label).paddedRight (' ', 8)
-                  << " out_rms=" << juce::String (rmsDb (buf), 1) << "dB"
-                  << "  out_peak=" << juce::String (peakDb (buf), 1) << "dB"
+                  << " play-loud=" << juce::String (aRms, 1) << "dB"
+                  << "  peak=" << juce::String (peakDb (buf), 1) << "dB"
                   << "  L/Rcorr=" << juce::String ((float) corr, 3)
                   << (sane ? "  [ok]" : "  [!! NaN/Inf]") << "\n";
 
@@ -130,6 +150,7 @@ namespace
             std::unique_ptr<juce::AudioFormatWriter> writer (fmt.createWriterFor (stream, kSr, 2, 24, {}, 0));
             if (writer) writer->writeFromAudioSampleBuffer (buf, 0, N);
         }
+        return { peakDb (buf), aRms, (float) corr, sane };
     }
 }
 
@@ -138,7 +159,13 @@ int main (int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     juce::File outDir ("/tmp/deanamp"); outDir.createDirectory();
 
-    juce::File diFile (argc > 1 ? juce::String (argv[1]) : juce::String ("/tmp/deanamp/di.wav"));
+   #ifdef DEANAMP_DI_FIXTURE
+    const juce::String defaultDi (DEANAMP_DI_FIXTURE);
+   #else
+    const juce::String defaultDi ("/tmp/deanamp/di.wav");
+   #endif
+
+    juce::File diFile (argc > 1 ? juce::String (argv[1]) : defaultDi);
     juce::AudioBuffer<float> di;
     if (loadWav (diFile, di))
         std::cout << "Loaded DI: " << diFile.getFullPathName() << "  (" << di.getNumSamples() << " samples)\n";
@@ -154,11 +181,41 @@ int main (int argc, char** argv)
     deanamp::DeanAmpProcessor p;
     p.prepareToPlay (kSr, kBlock);
 
-    runChannel (p, 0, "Clean",  di, outDir);
-    runChannel (p, 1, "Crunch", di, outDir);
-    runChannel (p, 2, "Lead",   di, outDir);
+    const ChannelStats s[3] = {
+        runChannel (p, 0, "Clean",  di, outDir),
+        runChannel (p, 1, "Crunch", di, outDir),
+        runChannel (p, 2, "Lead",   di, outDir),
+    };
 
     std::cout << "\nWrote di_*.wav to " << outDir.getFullPathName() << "\n";
+
+    // ---- Assertions (regression guards) ------------------------------------
+    int failures = 0;
+    auto check = [&] (bool ok, const juce::String& msg)
+    {
+        std::cout << (ok ? "  PASS  " : "  FAIL  ") << msg << "\n";
+        if (! ok) ++failures;
+    };
+    std::cout << "\nChecks:\n";
+
+    for (int i = 0; i < 3; ++i)
+    {
+        const char* nm = (i == 0 ? "Clean" : i == 1 ? "Crunch" : "Lead");
+        check (s[i].sane,               juce::String (nm) + ": finite output (no NaN/Inf)");
+        check (s[i].peakDbV < -0.1f,    juce::String (nm) + ": no full-scale clipping (peak " + juce::String (s[i].peakDbV,1) + " dB)");
+        check (s[i].activeRmsDb > -55.f,juce::String (nm) + ": not effectively silent (play-loud " + juce::String (s[i].activeRmsDb,1) + " dB)");
+    }
+
+    // Channel loudness balance: all three within 8 dB of each other.
+    float lo = 1e9f, hi = -1e9f;
+    for (auto& st : s) { lo = juce::jmin (lo, st.activeRmsDb); hi = juce::jmax (hi, st.activeRmsDb); }
+    check (hi - lo <= 8.0f, "Channel balance within 8 dB (spread " + juce::String (hi - lo, 1) + " dB)");
+
+    // Stereo cab produces width (L/R not perfectly correlated) on the driven channels.
+    check (s[1].corr < 0.99f, "Crunch has stereo width (corr " + juce::String (s[1].corr,3) + ")");
+    check (s[2].corr < 0.97f, "Lead has stereo width (corr "   + juce::String (s[2].corr,3) + ")");
+
+    std::cout << (failures == 0 ? "\nALL CHECKS PASSED\n" : "\n" + juce::String (failures) + " CHECK(S) FAILED\n");
     juce::ignoreUnused (argc, argv);
-    return 0;
+    return failures == 0 ? 0 : 1;
 }

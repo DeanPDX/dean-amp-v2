@@ -162,7 +162,7 @@ public:
         // hot synthetic tone-test signal. Clean is nearly linear (it barely
         // compresses), so at real playing levels it is ~16 dB quieter than the
         // saturating channels and needs a much LARGER makeup to match them.
-        const float makeup = (channel == Channel::Clean)  ? 0.42f
+        const float makeup = (channel == Channel::Clean)  ? 0.30f
                            : (channel == Channel::Crunch) ? 0.30f
                            :                                0.42f;
 
@@ -195,8 +195,11 @@ public:
 private:
     void applyChannelVoicing()
     {
-        // Per-channel gain mapping: Clean is gentler, Lead is brutal
-        float chanGainMul = (channel == Channel::Clean)  ? 1.5f
+        // Per-channel gain mapping: Clean is gentler, Lead is brutal.
+        // Clean still needs enough gain to drive the power amp to a healthy
+        // level and to gently compress transients — at 1.5 it barely amplified a
+        // low-output single-coil, leaving it quiet and spiky (huge crest factor).
+        float chanGainMul = (channel == Channel::Clean)  ? 4.8f
                           : (channel == Channel::Crunch) ? 4.0f
                           :                                9.0f;
 
