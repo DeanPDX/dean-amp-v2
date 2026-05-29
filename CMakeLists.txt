@@ -177,3 +177,45 @@ target_link_libraries(DeanAmpToneTest PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+# ----------------------------------------------------------------------------
+# DI-test tool — runs a real guitar DI (or a realistic synthetic one) through
+# the processor and reports level/balance/width/sanity. Used to calibrate
+# channel loudness against a representative signal.
+# ----------------------------------------------------------------------------
+juce_add_console_app(DeanAmpDiTest
+    PRODUCT_NAME "Dean Amp DI Test"
+    BUNDLE_ID    com.deanaudio.deanamp.ditest
+)
+juce_generate_juce_header(DeanAmpDiTest)
+target_sources(DeanAmpDiTest PRIVATE
+    tools/DiTestMain.cpp
+    source/PluginProcessor.cpp
+    source/PluginEditor.cpp
+    source/dsp/TubeStage.cpp
+    source/dsp/ToneStack.cpp
+    source/dsp/PowerAmp.cpp
+    source/dsp/NoiseGate.cpp
+    source/dsp/CabSim.cpp
+    source/ui/DeanLookAndFeel.cpp
+    source/ui/RotaryKnob.cpp
+    source/ui/LevelMeter.cpp
+    source/ui/ToggleSwitch.cpp
+    source/ui/AmpChassis.cpp
+)
+target_include_directories(DeanAmpDiTest PRIVATE source)
+target_compile_definitions(DeanAmpDiTest PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
+target_link_libraries(DeanAmpDiTest PRIVATE
+    DeanAmpData
+    juce::juce_audio_utils
+    juce::juce_dsp
+    juce::juce_gui_basics
+    juce::juce_graphics
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
