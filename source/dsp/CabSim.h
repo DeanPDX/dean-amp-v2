@@ -44,14 +44,19 @@ public:
 
     void setCabIndex (int idx)
     {
-        cabIndex = juce::jlimit (0, kNumCabs - 1, idx);
+        const int clamped = juce::jlimit (0, kNumCabs - 1, idx);
+        // Only rebuild the convolution when the selection actually changes.
+        // Reloading every block hammers the convolver's async loader and makes
+        // live cab switching unreliable (and wastes a lot of CPU).
+        if (clamped == cabIndex) return;
+        cabIndex = clamped;
         loadActiveIR();
     }
 
     void setMicBlend (float blend01)
     {
         const float clamped = juce::jlimit (0.0f, 1.0f, blend01);
-        if (std::abs (clamped - micBlend) < 0.01f) return; // dedupe
+        if (std::abs (clamped - micBlend) < 0.005f) return; // dedupe
         micBlend = clamped;
         loadActiveIR();
     }
@@ -117,12 +122,14 @@ private:
         // Per-cab parameters: [low resonance Hz, low Q, presence Hz, presence Q, presence gain,
         //                     high cut Hz, body bump Hz, body gain, decay seconds]
         struct CabSpec { float resHz, resQ, presHz, presGain, hiCut, bodyHz, bodyGain, decay; };
+        // Spread well apart so switching is obviously audible — hiCut (top-end
+        // rolloff) is the most recognisable difference between real cabs.
         static const CabSpec specs[kNumCabs] = {
             //  resHz  resQ  presHz presG hiCut  bodyHz bodyG  decay
-            {   95.0f, 5.0f, 1800.f,  4.f, 4000.f, 450.f,  3.f, 0.020f }, // 4x12 Greenback
-            {  110.0f, 6.0f, 2400.f,  6.f, 5200.f, 800.f,  4.f, 0.022f }, // 4x12 V30
-            {   80.0f, 4.0f, 3200.f,  3.f, 5500.f, 350.f,  2.f, 0.018f }, // 2x12 American
-            {  120.0f, 5.5f, 1500.f,  5.f, 3500.f, 600.f,  4.f, 0.025f }, // 1x12 Tweed
+            {   95.0f, 5.0f, 1650.f,  3.f, 3600.f, 480.f,  5.f, 0.024f }, // 4x12 Greenback — dark, woody, soft top
+            {  110.0f, 6.0f, 2700.f,  8.f, 5600.f, 820.f,  4.f, 0.020f }, // 4x12 V30       — aggressive upper-mid, present
+            {   78.0f, 4.0f, 3700.f,  4.f, 7000.f, 300.f,  1.f, 0.015f }, // 2x12 American  — scooped, open, bright
+            {  128.0f, 6.0f, 1250.f,  6.f, 2900.f, 600.f,  6.f, 0.030f }, // 1x12 Tweed     — boxy, midrangey, very dark top
         };
         const auto& s = specs[cabId];
 
@@ -136,12 +143,15 @@ private:
         // Mode 2: speaker body (low-mid)
         // Mode 3: presence peak (mid-high)
         // Mode 4: cone breakup (high) — broader, faster decay
+        // Mic position (offAxis) dramatically darkens the top: moving off the
+        // speaker cap rolls off the presence peak and the cone-breakup highs.
+        const float presMicMul = offAxis ? 0.45f : 1.0f;
         struct Mode { float f, q, g, decayMul; };
         std::array<Mode, 4> modes = {{
-            { s.resHz,   s.resQ * 0.5f,  1.0f,           1.4f },
-            { s.bodyHz,  3.5f,            s.bodyGain * 0.4f, 1.0f },
-            { s.presHz,  4.0f,            s.presGain * 0.35f, 0.7f },
-            { offAxis ? s.hiCut * 0.7f : s.hiCut, 1.2f, offAxis ? 0.5f : 0.8f, 0.4f }
+            { s.resHz,   s.resQ * 0.5f,  1.0f,                          1.4f },
+            { s.bodyHz,  3.5f,            s.bodyGain * 0.4f,            1.0f },
+            { s.presHz,  4.0f,            s.presGain * 0.35f * presMicMul, 0.7f },
+            { offAxis ? s.hiCut * 0.5f : s.hiCut, 1.2f, offAxis ? 0.22f : 0.9f, 0.4f }
         }};
 
         // Sum decaying sinusoids
@@ -157,11 +167,14 @@ private:
             }
         }
 
-        // Add an initial transient (the direct sound)
-        ir[0] += offAxis ? 0.8f : 1.2f;
+        // Add an initial transient (the direct sound) — punchier on-axis.
+        ir[0] += offAxis ? 0.5f : 1.3f;
 
-        // Quick smoothing 1-pole low-pass to round off zipper highs
-        const float lpCoef = offAxis ? 0.35f : 0.20f;
+        // 1-pole low-pass that sets the overall top-end. A HIGHER coefficient is
+        // brighter, so on-axis (close to the cap) is bright and off-axis is much
+        // darker. (The previous values had this backwards, making mic position
+        // barely audible.)
+        const float lpCoef = offAxis ? 0.12f : 0.42f;
         float prev = 0.0f;
         for (int n = 0; n < kIrLengthSamples; ++n)
         {

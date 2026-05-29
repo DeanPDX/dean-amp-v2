@@ -104,6 +104,7 @@ namespace
                 writer->writeFromAudioSampleBuffer (buf, 0, totalSamples);
         }
     }
+
 }
 
 int main (int argc, char** argv)
