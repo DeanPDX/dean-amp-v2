@@ -158,10 +158,11 @@ public:
         // Per-channel makeup to balance perceived loudness — heavier channels
         // get more compression so they need a bigger post-stage trim. These
         // values were tuned against the tone-test peak/RMS readings.
-        // Clean is far less compressed than the high-gain channels, so it needs
-        // a much smaller post-stage trim to sit at the same loudness (otherwise
-        // it jumps ~9 dB louder when switching channels).
-        const float makeup = (channel == Channel::Clean)  ? 0.07f
+        // Calibrated against a realistic-level DI (see DeanAmpDiTest), NOT the
+        // hot synthetic tone-test signal. Clean is nearly linear (it barely
+        // compresses), so at real playing levels it is ~16 dB quieter than the
+        // saturating channels and needs a much LARGER makeup to match them.
+        const float makeup = (channel == Channel::Clean)  ? 0.42f
                            : (channel == Channel::Crunch) ? 0.30f
                            :                                0.42f;
 
