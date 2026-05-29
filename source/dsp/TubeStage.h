@@ -158,7 +158,10 @@ public:
         // Per-channel makeup to balance perceived loudness — heavier channels
         // get more compression so they need a bigger post-stage trim. These
         // values were tuned against the tone-test peak/RMS readings.
-        const float makeup = (channel == Channel::Clean)  ? 0.18f
+        // Clean is far less compressed than the high-gain channels, so it needs
+        // a much smaller post-stage trim to sit at the same loudness (otherwise
+        // it jumps ~9 dB louder when switching channels).
+        const float makeup = (channel == Channel::Clean)  ? 0.07f
                            : (channel == Channel::Crunch) ? 0.30f
                            :                                0.42f;
 

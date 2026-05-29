@@ -117,10 +117,11 @@ bool DeanAmpProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 void DeanAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // The amp is mono internally (input is always summed to mono, then the
-    // finished signal is broadcast to the output channels), so the whole DSP
-    // chain — including the oversamplers and the cab convolver — is prepared
-    // for a single channel.
+    // The amp itself is mono (input is summed to mono and the preamp/power-amp
+    // run on one channel), so those stages are prepared for a single channel.
+    // The cab is the stereo stage: the mono amp signal is fed to both channels
+    // and convolved with slightly different L/R IRs for width — so it is
+    // prepared for two channels.
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
     spec.maximumBlockSize = (juce::uint32) samplesPerBlock;
@@ -130,7 +131,10 @@ void DeanAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     preamp.prepare (spec);
     toneStack.prepare (sampleRate);
     powerAmp.prepare (spec);
-    cab.prepare (spec);
+
+    auto cabSpec = spec;
+    cabSpec.numChannels = 2;
+    cab.prepare (cabSpec);
 
     setLatencySamples (preamp.getOversamplingLatencySamples() + powerAmp.getLatencySamples());
     updateFromParams();
@@ -214,9 +218,8 @@ void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         inputMeterR.store (peak);
     }
 
-    // Process the single mono channel through the whole chain. Doing this on one
-    // channel (rather than two identical ones) is both correct — the per-stage
-    // IIR filters keep a single state — and cheaper.
+    // Run the mono amp (gate → preamp → tone → power) on a single channel — both
+    // correct (the per-stage IIR filters keep one state) and cheaper.
     juce::dsp::AudioBlock<float> block (buffer);
     auto mono = block.getSingleChannelBlock (0);
 
@@ -224,20 +227,22 @@ void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     preamp.process   (mono);
     toneStack.process(mono);
     powerAmp.process (mono);
-    cab.process      (mono);
 
-    // Post-cab level + output trim (on the processed mono channel).
-    buffer.applyGain (0, 0, n, cabLevelGain * outputTrim);
-
-    // Broadcast the finished mono signal to every output channel (stereo out).
+    // Feed the finished mono signal to every output channel, then run the STEREO
+    // cab — its slightly different L/R impulse responses pull the channels apart
+    // for a wide image (while the low end stays mono-compatible).
     for (int c = 1; c < numOut; ++c)
         buffer.copyFrom (c, 0, buffer, 0, 0, n);
 
-    // Output metering.
+    cab.process (block);
+
+    // Post-cab level + output trim (all output channels).
+    buffer.applyGain (cabLevelGain * outputTrim);
+
+    // Output metering (per channel — the cab makes L/R genuinely different now).
     {
-        const float peak = buffer.getMagnitude (0, 0, n);
-        outputMeterL.store (peak);
-        outputMeterR.store (peak);
+        outputMeterL.store (buffer.getMagnitude (0, 0, n));
+        outputMeterR.store (buffer.getMagnitude (numOut > 1 ? 1 : 0, 0, n));
     }
 }
 

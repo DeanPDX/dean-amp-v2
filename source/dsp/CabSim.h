@@ -34,8 +34,9 @@ public:
         spec_ = spec;
 
         for (size_t c = 0; c < (size_t) kNumCabs; ++c)
-            for (size_t v = 0; v < 2; ++v) // 0 = on-axis, 1 = off-axis
-                irs[c][v] = makeIR ((int) c, v == 1);
+            for (size_t axis = 0; axis < 2; ++axis)       // 0 = on-axis, 1 = off-axis
+                for (size_t var = 0; var < 2; ++var)      // 0 = left, 1 = right
+                    irs[c][axis][var] = makeIR ((int) c, axis == 1, (int) var);
 
         convolution.reset();
         convolution.prepare (spec);
@@ -75,47 +76,59 @@ public:
 private:
     void loadActiveIR()
     {
-        // Crossfade the on-axis and off-axis IRs into the convolver
-        juce::AudioBuffer<float> blend (1, kIrLengthSamples);
-        auto* dst = blend.getWritePointer (0);
-        const auto& a = irs[(size_t) cabIndex][0];
-        const auto& b = irs[(size_t) cabIndex][1];
+        // Build a 2-channel IR: L = left variant, R = right variant, each a
+        // crossfade of the on-axis and off-axis IRs by the mic blend.
+        juce::AudioBuffer<float> blend (2, kIrLengthSamples);
+        auto* dstL = blend.getWritePointer (0);
+        auto* dstR = blend.getWritePointer (1);
+        const auto& onL  = irs[(size_t) cabIndex][0][0];
+        const auto& offL = irs[(size_t) cabIndex][1][0];
+        const auto& onR  = irs[(size_t) cabIndex][0][1];
+        const auto& offR = irs[(size_t) cabIndex][1][1];
         for (size_t i = 0; i < (size_t) kIrLengthSamples; ++i)
-            dst[i] = a[i] * (1.0f - micBlend) + b[i] * micBlend;
+        {
+            dstL[i] = onL[i] * (1.0f - micBlend) + offL[i] * micBlend;
+            dstR[i] = onR[i] * (1.0f - micBlend) + offR[i] * micBlend;
+        }
 
         // Frequency-domain peak normalization. A peak-normalized time-domain
         // IR can still have a +15 dB peak in its frequency response if it has
-        // strong resonant modes — exactly what happened with our parametric IRs.
-        // Compute |H(f)| via FFT and scale so the peak magnitude is 0 dB.
+        // strong resonant modes. Compute |H(f)| via FFT for both channels and
+        // scale BOTH by the same factor so the L/R balance is preserved.
         const int fftOrder = 11;            // 2048 = 1 << 11
         const int fftSize  = 1 << fftOrder; // matches kIrLengthSamples
         juce::dsp::FFT fft (fftOrder);
 
-        std::vector<float> fftData ((size_t) fftSize * 2, 0.0f);
-        for (int i = 0; i < kIrLengthSamples; ++i)
-            fftData[(size_t) i] = dst[i];
-
-        fft.performFrequencyOnlyForwardTransform (fftData.data());
-
-        float maxMag = 1e-9f;
-        for (int i = 0; i < fftSize / 2; ++i)
-            maxMag = std::max (maxMag, fftData[(size_t) i]);
+        auto peakMag = [&] (const float* ir)
+        {
+            std::vector<float> fftData ((size_t) fftSize * 2, 0.0f);
+            for (int i = 0; i < kIrLengthSamples; ++i) fftData[(size_t) i] = ir[i];
+            fft.performFrequencyOnlyForwardTransform (fftData.data());
+            float m = 1e-9f;
+            for (int i = 0; i < fftSize / 2; ++i) m = std::max (m, fftData[(size_t) i]);
+            return m;
+        };
+        const float maxMag = std::max (peakMag (dstL), peakMag (dstR));
 
         // Target: peak magnitude == -3 dB (leave a little headroom)
-        const float target = 0.707f;
-        const float scale  = target / maxMag;
-        for (int i = 0; i < kIrLengthSamples; ++i) dst[i] *= scale;
+        const float scale = 0.707f / maxMag;
+        for (int i = 0; i < kIrLengthSamples; ++i) { dstL[i] *= scale; dstR[i] *= scale; }
 
         convolution.loadImpulseResponse (
             std::move (blend),
             sr,
-            juce::dsp::Convolution::Stereo::no,
+            juce::dsp::Convolution::Stereo::yes,
             juce::dsp::Convolution::Trim::no,
             juce::dsp::Convolution::Normalise::no);
     }
 
-    // Generate a parametric IR for the given cab
-    std::array<float, kIrLengthSamples> makeIR (int cabId, bool offAxis) const
+    // Generate a parametric IR for the given cab.
+    //  variant 0 = left channel, variant 1 = right channel. The right variant
+    //  shifts the frequency and phase of ONLY the upper modes (presence + cone
+    //  breakup), leaving the low/low-mid modes and the direct transient identical.
+    //  That decorrelates the top end for a wide stereo image while keeping the
+    //  bass mono-compatible (no comb-filtering / phase cancellation when summed).
+    std::array<float, kIrLengthSamples> makeIR (int cabId, bool offAxis, int variant) const
     {
         std::array<float, kIrLengthSamples> ir {};
 
@@ -146,12 +159,19 @@ private:
         // Mic position (offAxis) dramatically darkens the top: moving off the
         // speaker cap rolls off the presence peak and the cone-breakup highs.
         const float presMicMul = offAxis ? 0.45f : 1.0f;
-        struct Mode { float f, q, g, decayMul; };
+
+        // Right-channel (variant 1) decorrelation — applied to the upper modes only.
+        const bool  right     = (variant == 1);
+        const float presFMul  = right ? 1.035f : 1.0f;
+        const float hiFMul    = right ? 1.08f  : 1.0f;
+        const float upperPhase= right ? juce::MathConstants<float>::halfPi : 0.0f;
+
+        struct Mode { float f, q, g, decayMul, phase; };
         std::array<Mode, 4> modes = {{
-            { s.resHz,   s.resQ * 0.5f,  1.0f,                          1.4f },
-            { s.bodyHz,  3.5f,            s.bodyGain * 0.4f,            1.0f },
-            { s.presHz,  4.0f,            s.presGain * 0.35f * presMicMul, 0.7f },
-            { offAxis ? s.hiCut * 0.5f : s.hiCut, 1.2f, offAxis ? 0.22f : 0.9f, 0.4f }
+            { s.resHz,   s.resQ * 0.5f,  1.0f,                            1.4f, 0.0f },
+            { s.bodyHz,  3.5f,            s.bodyGain * 0.4f,              1.0f, 0.0f },
+            { s.presHz * presFMul, 4.0f,  s.presGain * 0.35f * presMicMul, 0.7f, upperPhase },
+            { (offAxis ? s.hiCut * 0.5f : s.hiCut) * hiFMul, 1.2f, offAxis ? 0.22f : 0.9f, 0.4f, upperPhase }
         }};
 
         // Sum decaying sinusoids
@@ -162,7 +182,7 @@ private:
             float amp = m.g;
             for (int n = 0; n < kIrLengthSamples; ++n)
             {
-                ir[(size_t) n] += amp * std::cos (omega * (float) n);
+                ir[(size_t) n] += amp * std::cos (omega * (float) n + m.phase);
                 amp *= decay;
             }
         }
@@ -189,7 +209,8 @@ private:
     juce::dsp::ProcessSpec spec_ {};
     juce::dsp::Convolution convolution;
 
-    std::array<std::array<std::array<float, kIrLengthSamples>, 2>, kNumCabs> irs {};
+    // [cab][axis: 0=on,1=off][variant: 0=left,1=right]
+    std::array<std::array<std::array<std::array<float, kIrLengthSamples>, 2>, 2>, kNumCabs> irs {};
     int cabIndex { 1 };       // default V30
     float micBlend { 0.35f }; // a touch off-axis sounds better as default
     bool bypass { false };
