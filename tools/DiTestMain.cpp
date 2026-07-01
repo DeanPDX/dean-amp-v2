@@ -99,12 +99,14 @@ namespace
     }
 
     ChannelStats runChannel (deanamp::DeanAmpProcessor& p, int chan, const char* label,
-                             const juce::AudioBuffer<float>& di, const juce::File& outDir)
+                             const juce::AudioBuffer<float>& di, const juce::File& outDir,
+                             float gainNorm = 0.5f)
     {
         // Neutral settings: knobs at noon, gate open, unity output.
         setChoice (p, "channel", chan);
         setChoice (p, "cab", 1); setChoice (p, "voicing", 0); setChoice (p, "mic", 0);
         for (auto id : { "gain","bass","mid","treble","presence","resonance","master" }) setVal (p, id, 0.5f);
+        setVal (p, "gain", gainNorm);
         // input/output 0 dB on a -12..12 / -36..12 range; gate fully open at -80
         if (auto* par = p.apvts.getParameter ("input"))  par->setValueNotifyingHost (par->convertTo0to1 (0.0f));
         if (auto* par = p.apvts.getParameter ("output")) par->setValueNotifyingHost (par->convertTo0to1 (0.0f));
@@ -144,6 +146,7 @@ namespace
                   << (sane ? "  [ok]" : "  [!! NaN/Inf]") << "\n";
 
         auto outFile = outDir.getChildFile (juce::String ("di_") + juce::String (label).toLowerCase() + ".wav");
+        outFile.deleteFile(); // FileOutputStream appends to existing files
         juce::WavAudioFormat fmt;
         if (auto* stream = outFile.createOutputStream().release())
         {
@@ -181,10 +184,27 @@ int main (int argc, char** argv)
     deanamp::DeanAmpProcessor p;
     p.prepareToPlay (kSr, kBlock);
 
+    // Warm up the cab convolver: the IR loads on a background thread, so an
+    // offline render would otherwise start with the cab dry for ~0.5 s.
+    {
+        juce::AudioBuffer<float> warm (2, kBlock);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 50; ++i)
+        {
+            warm.clear();
+            p.processBlock (warm, midi);
+            if (i % 10 == 0) juce::Thread::sleep (20);
+        }
+    }
+
+    // Optional argv[2]: gain knob 0..1 (default noon).
+    const float gainNorm = argc > 2 ? juce::jlimit (0.0f, 1.0f, juce::String (argv[2]).getFloatValue())
+                                    : 0.5f;
+
     const ChannelStats s[3] = {
-        runChannel (p, 0, "Clean",  di, outDir),
-        runChannel (p, 1, "Crunch", di, outDir),
-        runChannel (p, 2, "Lead",   di, outDir),
+        runChannel (p, 0, "Clean",  di, outDir, gainNorm),
+        runChannel (p, 1, "Crunch", di, outDir, gainNorm),
+        runChannel (p, 2, "Lead",   di, outDir, gainNorm),
     };
 
     std::cout << "\nWrote di_*.wav to " << outDir.getFullPathName() << "\n";

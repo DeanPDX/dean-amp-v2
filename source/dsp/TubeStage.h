@@ -8,15 +8,22 @@ namespace deanamp
 /**
  * Single 12AX7 triode gain stage.
  *
- * Models:
- *  - Asymmetric soft clipping (cathode-biased triode) via a tuned tanh with bias shift,
- *    producing the even-harmonic content that gives 12AX7s their warmth.
- *  - Grid-leak conduction (hard limit on the positive swing) for that singing compression
- *    when pushed.
- *  - Inter-stage coupling cap (HP) and miller capacitance (LP) — voiced per stage so the
- *    bass tightens as gain stacks (just like a real preamp).
- *  - Bias drift: positive grid current pulls the bias point negative (blocking distortion
- *    on sustained notes; the "spongy" feel of a cranked amp).
+ * Models, in signal order:
+ *  - Interstage coupling cap (HP) into the grid.
+ *  - Grid conduction: past the conduction knee the grid draws current and the
+ *    source impedance eats the swing — a sharp knee with a logarithmic tail
+ *    (the "singing" compression of a pushed stage).
+ *  - Blocking distortion: grid current charges the coupling cap and drags the
+ *    operating point down, recovering over ~20 ms — the spongy feel on hard
+ *    digs. Depth is clamped so hot signals shift the duty cycle instead of
+ *    gating themselves silent.
+ *  - Asymmetric plate curve: the cutoff side has ~1.45x the headroom and a much
+ *    softer knee than the conduction side — that contrast (and the duty-cycle
+ *    shift it causes) is where the even-harmonic warmth comes from.
+ *  - Miller capacitance (LP) after the nonlinearity (de-fizzes).
+ *  - Stage inversion: a triode inverts, so cascaded stages clip ALTERNATING
+ *    sides of the waveform — essential to how a cascaded preamp sounds; without
+ *    it every stage flattens the same side and the tone goes homogeneous.
  */
 class TubeStage
 {
@@ -24,81 +31,100 @@ public:
     void prepare (double sampleRate)
     {
         sr = sampleRate;
-        couplingHP.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, couplingHz);
-        millerLP.coefficients   = juce::dsp::IIR::Coefficients<float>::makeLowPass  (sr, millerHz);
+        driftCoef = (float) std::exp (-1.0 / (0.020 * sr)); // ~20 ms recovery
+        updateFilters();
+        reset();
+    }
+
+    void reset()
+    {
         couplingHP.reset();
         millerLP.reset();
         biasState = 0.0f;
     }
 
-    void setVoicing (float couplingHzIn, float millerHzIn, float biasAsymmetryIn, float gainIn)
+    /** biasIn > 0 biases toward grid conduction (clips the top earlier);
+        biasIn < 0 biases toward cutoff — a strongly negative value makes a
+        "cold clipper" (the SLO/5150-style stage behind modern high gain).
+        outLevelIn is the interstage divider that follows the stage. */
+    void setVoicing (float couplingHzIn, float millerHzIn, float biasIn,
+                     float gainIn, float outLevelIn)
     {
         couplingHz = couplingHzIn;
         millerHz   = millerHzIn;
-        biasAsym   = biasAsymmetryIn;
+        bias       = biasIn;
         gain       = gainIn;
+        outLevel   = outLevelIn;
+        restingY   = triodeShape (biasIn);
         if (sr > 0.0)
-        {
-            couplingHP.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, couplingHz);
-            millerLP.coefficients   = juce::dsp::IIR::Coefficients<float>::makeLowPass  (sr, millerHz);
-        }
+            updateFilters();
+    }
+
+    /** Static triode transfer. Positive input heads toward grid conduction
+        (sharp knee, log tail); negative toward cutoff (soft knee, ~1.45x the
+        headroom). Both halves have unity slope at 0 and join C1-continuously. */
+    static inline float triodeShape (float v) noexcept
+    {
+        if (v > kGridKnee)
+            v = kGridKnee + 0.5f * std::log1p ((v - kGridKnee) * 2.0f);
+        if (v >= 0.0f)
+            return std::tanh (v);
+        return 1.45f * std::tanh (v * (1.0f / 1.45f));
     }
 
     inline float processSample (float x) noexcept
     {
-        // Pre stage coupling cap (blocks DC, sets low-end voicing)
         x = couplingHP.processSample (x);
+        float v = x * gain + bias;
 
-        // Apply stage gain
-        float v = x * gain;
+        // Blocking distortion (bias drift), clamped via tanh so it can shift
+        // the operating point at most ~0.5 toward cutoff.
+        biasState = driftCoef * biasState
+                  + (1.0f - driftCoef) * juce::jmax (0.0f, v - kGridKnee);
+        v -= 0.5f * std::tanh (biasState);
 
-        // Bias-drift envelope (slow): positive excursions push bias negative
-        const float driftCoef = 0.9995f; // ~ms time constant @ 44.1k
-        biasState = driftCoef * biasState + (1.0f - driftCoef) * juce::jmax (0.0f, v);
-
-        // Bias point: nominal asymmetry plus drift
-        const float bias = biasAsym - 0.6f * biasState;
-
-        // Asymmetric triode transfer: tanh on the negative half is softer than on the positive
-        // Positive grid swing hits grid-current limiting earlier — produces 2nd harmonic content
-        float y;
-        const float vb = v + bias;
-        if (vb >= 0.0f)
-        {
-            // Grid current region — harder clip
-            y = std::tanh (vb * 0.7f) * 0.85f;
-        }
-        else
-        {
-            // Cathode region — softer, more headroom
-            y = std::tanh (vb * 1.1f);
-        }
-
-        // Re-center (remove the DC offset the asymmetry created)
-        y -= std::tanh (bias);
-
-        // Miller capacitance — high-cut after the nonlinearity (de-fizzes)
+        float y = triodeShape (v) - restingY;
         y = millerLP.processSample (y);
-
-        return y;
+        return -outLevel * y; // triode inverts
     }
 
 private:
-    double sr { 44100.0 };
+    static constexpr float kGridKnee = 0.75f;
+
+    void updateFilters()
+    {
+        couplingHP.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, couplingHz);
+        millerLP.coefficients   = juce::dsp::IIR::Coefficients<float>::makeLowPass  (sr, millerHz);
+    }
+
+    double sr { 0.0 };
     float couplingHz { 30.0f };
     float millerHz   { 8000.0f };
-    float biasAsym   { 0.3f };
+    float bias       { 0.2f };
     float gain       { 1.0f };
+    float outLevel   { 1.0f };
+    float restingY   { 0.0f };
     float biasState  { 0.0f };
+    float driftCoef  { 0.9995f };
 
     juce::dsp::IIR::Filter<float> couplingHP;
     juce::dsp::IIR::Filter<float> millerLP;
 };
 
 /**
- * Cascaded preamp: 3–4 tube stages with progressively brighter voicing,
- * an interstage "bright cap" on stage 1, and 8x oversampling for alias-free
- * high-gain.
+ * Cascaded preamp, 8x oversampled.
+ *
+ * Topology follows a real amp rather than "N identical clippers in a row":
+ *
+ *   input tube (fixed gain) → GAIN POT → cascade of voiced stages
+ *
+ * The input tube runs at a fixed, moderate gain so pick transients hit the
+ * cascade with their dynamics intact; the gain knob is the pot AFTER it, like
+ * the real thing. Each later stage has its own drive and an interstage divider
+ * (outLevel) so saturation builds progressively down the chain instead of
+ * every stage slamming into a square wave. On Lead, stage 3 is a cold clipper
+ * (bias far toward cutoff) — the aggressive, chunky asymmetry modern high-gain
+ * amps are built around.
  */
 class TubePreamp
 {
@@ -119,6 +145,10 @@ public:
 
         inputHP.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (spec.sampleRate, 40.0f);
         inputHP.reset();
+        // Asymmetric clipping leaves a drive-dependent DC offset on the last
+        // stage's output; block it before the tone stack.
+        outputDC.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (spec.sampleRate, 20.0f);
+        outputDC.reset();
     }
 
     void setChannel (Channel c)
@@ -155,16 +185,9 @@ public:
         const int numStages = (channel == Channel::Clean) ? 2
                             : (channel == Channel::Crunch) ? 3 : 4;
 
-        // Per-channel makeup to balance perceived loudness — heavier channels
-        // get more compression so they need a bigger post-stage trim. These
-        // values were tuned against the tone-test peak/RMS readings.
-        // Calibrated against a realistic-level DI (see DeanAmpDiTest), NOT the
-        // hot synthetic tone-test signal. Clean is nearly linear (it barely
-        // compresses), so at real playing levels it is ~16 dB quieter than the
-        // saturating channels and needs a much LARGER makeup to match them.
-        const float makeup = (channel == Channel::Clean)  ? 0.30f
-                           : (channel == Channel::Crunch) ? 0.30f
-                           :                                0.42f;
+        // Each stage inverts; flip odd-stage-count channels back so switching
+        // channels doesn't flip the output polarity.
+        const float polarity = (numStages % 2 == 1) ? -1.0f : 1.0f;
 
         for (size_t ch = 0; ch < osBlock.getNumChannels(); ++ch)
         {
@@ -172,21 +195,29 @@ public:
             const size_t n = osBlock.getNumSamples();
             for (size_t i = 0; i < n; ++i)
             {
-                float x = d[i];
-                for (int s = 0; s < numStages; ++s)
+                float x = stages[0].processSample (d[i]);
+                x *= potGain; // the gain knob lives after the input tube
+                for (int s = 1; s < numStages; ++s)
                     x = stages[(size_t) s].processSample (x);
-                d[i] = x * makeup;
+                d[i] = x * makeup * polarity;
             }
         }
 
         oversampler->processSamplesDown (block);
+
+        for (size_t ch = 0; ch < block.getNumChannels(); ++ch)
+        {
+            auto* d = block.getChannelPointer (ch);
+            for (size_t i = 0; i < block.getNumSamples(); ++i)
+                d[i] = outputDC.processSample (d[i]);
+        }
     }
 
     void reset()
     {
         if (oversampler) oversampler->reset();
         inputHP.reset();
-        // re-prepare stages by re-applying voicing (resets filters)
+        outputDC.reset();
         if (baseSampleRate > 0)
             for (auto& s : stages) s.prepare (baseSampleRate * 8.0);
         applyChannelVoicing();
@@ -195,41 +226,54 @@ public:
 private:
     void applyChannelVoicing()
     {
-        // Per-channel gain mapping: Clean is gentler, Lead is brutal.
-        // Clean still needs enough gain to drive the power amp to a healthy
-        // level and to gently compress transients — at 1.5 it barely amplified a
-        // low-output single-coil, leaving it quiet and spiky (huge crest factor).
-        float chanGainMul = (channel == Channel::Clean)  ? 4.8f
-                          : (channel == Channel::Crunch) ? 4.0f
-                          :                                9.0f;
+        // Audio-taper gain pot (never fully closed — real amps still pass a
+        // little at gain 0).
+        potGain = 0.045f + 0.955f * gainKnob * gainKnob;
 
-        // Gain knob shapes 0..1 into stage drive (exponential feel)
-        const float drive = 0.6f + 6.0f * std::pow (gainKnob, 1.8f);
+        // Gain-dependent tightening: more gain → higher HP into the second
+        // stage, so cranked settings stay chunky instead of turning to mud.
+        const float tight = 1.0f + 0.8f * gainKnob;
 
-        // Stage 1: bright voicing if bright switch on
-        stages[0].setVoicing (
-            /* coupling Hz */ bright ? 220.0f : 70.0f,
-            /* miller Hz   */ 12000.0f,
-            /* bias asym   */ 0.25f,
-            /* gain        */ drive * chanGainMul * 0.9f);
+        // Makeup values calibrated with DeanAmpDiTest against the Strat DI
+        // fixture (play-loud balance across channels; see tools/DiTestMain.cpp).
+        switch (channel)
+        {
+            case Channel::Clean:
+                // Nearly linear; the input tube just kisses the knee on hard
+                // pick attacks, stage 2 adds gentle warmth.
+                stages[0].setVoicing (bright ? 180.0f : 25.0f, 12000.0f, 0.10f, 3.5f, 1.0f);
+                stages[1].setVoicing (45.0f, 11000.0f, 0.15f, 5.0f, 1.0f);
+                makeup = 0.66f;
+                break;
 
-        // Stage 2: tighter low end as gain stacks
-        stages[1].setVoicing (180.0f, 9500.0f, 0.30f, drive * chanGainMul * 1.0f);
+            case Channel::Crunch:
+                stages[0].setVoicing (bright ? 220.0f : 55.0f, 12000.0f, 0.12f, 5.0f, 1.0f);
+                stages[1].setVoicing (110.0f * tight, 9500.0f, 0.22f, 7.0f, 0.45f);
+                stages[2].setVoicing (190.0f, 8200.0f, 0.30f, 4.5f, 1.0f);
+                makeup = 0.345f;
+                break;
 
-        // Stage 3: even tighter, slightly darker (de-fizz)
-        stages[2].setVoicing (240.0f, 7500.0f, 0.35f, drive * chanGainMul * 0.9f);
-
-        // Stage 4 (lead only): the "saturator" — most asymmetry, controlled bandwidth
-        stages[3].setVoicing (300.0f, 6500.0f, 0.40f, drive * chanGainMul * 0.7f);
+            case Channel::Lead:
+                stages[0].setVoicing (bright ? 220.0f : 80.0f, 12000.0f, 0.12f, 7.0f, 1.0f);
+                stages[1].setVoicing (140.0f * tight, 9500.0f, 0.20f, 9.0f, 0.40f);
+                // Cold clipper: biased hard toward cutoff, clips one side
+                // almost immediately — the modern high-gain "chunk" stage.
+                stages[2].setVoicing (220.0f, 8000.0f, -0.90f, 7.5f, 0.35f);
+                stages[3].setVoicing (260.0f, 6800.0f, 0.25f, 5.0f, 1.0f);
+                makeup = 0.20f;
+                break;
+        }
     }
 
     Channel channel { Channel::Crunch };
     bool    bright  { false };
     float   gainKnob { 0.5f };
+    float   potGain  { 0.334f };
+    float   makeup   { 0.5f };
     double  baseSampleRate { 0.0 };
 
     std::array<TubeStage, 4> stages;
-    juce::dsp::IIR::Filter<float> inputHP;
+    juce::dsp::IIR::Filter<float> inputHP, outputDC;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
 };
 

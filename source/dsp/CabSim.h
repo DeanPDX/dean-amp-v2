@@ -91,27 +91,44 @@ private:
             dstR[i] = onR[i] * (1.0f - micBlend) + offR[i] * micBlend;
         }
 
-        // Frequency-domain peak normalization. A peak-normalized time-domain
-        // IR can still have a +15 dB peak in its frequency response if it has
-        // strong resonant modes. Compute |H(f)| via FFT for both channels and
-        // scale BOTH by the same factor so the L/R balance is preserved.
+        // Frequency-domain loudness normalization. Normalizing by the single
+        // PEAK |H(f)| bin makes the level depend on how resonant the response
+        // is: the close-mic'd (on-axis) IRs have a sharp presence peak, so
+        // peak-normalizing crushed their whole passband ~20 dB below the
+        // flatter off-axis IRs. Instead normalize the MEAN magnitude across
+        // the guitar band (80 Hz – 6 kHz) — perceived loudness — and only use
+        // the peak as a safety clamp. Both channels get the same factor so
+        // the L/R balance is preserved.
         const int fftOrder = 11;            // 2048 = 1 << 11
         const int fftSize  = 1 << fftOrder; // matches kIrLengthSamples
         juce::dsp::FFT fft (fftOrder);
 
-        auto peakMag = [&] (const float* ir)
+        auto bandStats = [&] (const float* ir)
         {
             std::vector<float> fftData ((size_t) fftSize * 2, 0.0f);
             for (int i = 0; i < kIrLengthSamples; ++i) fftData[(size_t) i] = ir[i];
             fft.performFrequencyOnlyForwardTransform (fftData.data());
-            float m = 1e-9f;
-            for (int i = 0; i < fftSize / 2; ++i) m = std::max (m, fftData[(size_t) i]);
-            return m;
+            const int lo = juce::jmax (1, (int) (80.0 * fftSize / sr));
+            const int hi = juce::jmin (fftSize / 2 - 1, (int) (6000.0 * fftSize / sr));
+            double sum = 0.0;
+            float pk = 1e-9f;
+            for (int i = lo; i <= hi; ++i)
+            {
+                sum += fftData[(size_t) i];
+                pk = std::max (pk, fftData[(size_t) i]);
+            }
+            return std::pair<float, float> ((float) (sum / (double) (hi - lo + 1)), pk);
         };
-        const float maxMag = std::max (peakMag (dstL), peakMag (dstR));
+        const auto [meanL, pkL] = bandStats (dstL);
+        const auto [meanR, pkR] = bandStats (dstR);
+        const float meanMag = std::max (meanL, meanR);
+        const float peakMag = std::max (pkL, pkR);
 
-        // Target: peak magnitude == -3 dB (leave a little headroom)
-        const float scale = 0.707f / maxMag;
+        // Target: mean magnitude == -9 dB; resonant peaks may ride above, but
+        // never past unity (keeps the convolver from adding gain anywhere).
+        float scale = 0.35f / meanMag;
+        if (peakMag * scale > 1.0f)
+            scale = 1.0f / peakMag;
         for (int i = 0; i < kIrLengthSamples; ++i) { dstL[i] *= scale; dstR[i] *= scale; }
 
         convolution.loadImpulseResponse (
@@ -146,16 +163,16 @@ private:
         };
         const auto& s = specs[cabId];
 
-        // Build via inverse-FFT-free approach: an initial impulse followed by a
-        // damped sum of resonant modes. This sounds more "cab-like" than a pure
-        // IIR steady-state response would.
+        // Build as a direct-sound transient plus damped resonant modes. The
+        // transient sets the broadband "body" of the response; each mode's
+        // FREQUENCY-RESPONSE peak is pinned at an explicit ratio above it.
+        // (A decaying cosine's |H| peak is ~gain × decay-samples, so tuning
+        // raw mode gains by ear put the resonances 40+ dB above the mid-band
+        // and the "cab" was four ringing bells with valleys between them.
+        // Pinning the ratio keeps the response speaker-shaped.)
         const float fs = (float) sr;
-        const float decaySamps = s.decay * fs;
+        const float direct = offAxis ? 0.5f : 1.3f;
 
-        // Mode 1: chassis resonance (low)
-        // Mode 2: speaker body (low-mid)
-        // Mode 3: presence peak (mid-high)
-        // Mode 4: cone breakup (high) — broader, faster decay
         // Mic position (offAxis) dramatically darkens the top: moving off the
         // speaker cap rolls off the presence peak and the cone-breakup highs.
         const float presMicMul = offAxis ? 0.45f : 1.0f;
@@ -166,20 +183,26 @@ private:
         const float hiFMul    = right ? 1.08f  : 1.0f;
         const float upperPhase= right ? juce::MathConstants<float>::halfPi : 0.0f;
 
-        struct Mode { float f, q, g, decayMul, phase; };
+        // Modes: peakRatio = |H| at the mode peak relative to the direct sound
+        // (2.5 ≈ +8 dB). Long decay only on the low resonance (the "thump");
+        // the upper modes use millisecond decays so they read as broad EQ
+        // character, not metallic ringing.
+        struct Mode { float f, peakRatio, decaySecs, phase; };
         std::array<Mode, 4> modes = {{
-            { s.resHz,   s.resQ * 0.5f,  1.0f,                            1.4f, 0.0f },
-            { s.bodyHz,  3.5f,            s.bodyGain * 0.4f,              1.0f, 0.0f },
-            { s.presHz * presFMul, 4.0f,  s.presGain * 0.35f * presMicMul, 0.7f, upperPhase },
-            { (offAxis ? s.hiCut * 0.5f : s.hiCut) * hiFMul, 1.2f, offAxis ? 0.22f : 0.9f, 0.4f, upperPhase }
+            { s.resHz,               2.5f,                                s.decay * 1.3f, 0.0f },
+            { s.bodyHz,              1.0f + s.bodyGain * 0.20f,           0.003f,         0.0f },
+            { s.presHz * presFMul,   (1.0f + s.presGain * 0.18f) * presMicMul, 0.0007f,   upperPhase },
+            { (offAxis ? s.hiCut * 0.5f : s.hiCut) * hiFMul,
+                                     offAxis ? 0.6f : 1.5f,               0.00035f,       upperPhase }
         }};
 
-        // Sum decaying sinusoids
+        // Sum decaying sinusoids, gain derived from the pinned peak ratio.
         for (auto& m : modes)
         {
             const float omega = juce::MathConstants<float>::twoPi * m.f / fs;
-            const float decay = std::exp (-1.0f / (decaySamps * m.decayMul));
-            float amp = m.g;
+            const float decaySamps = juce::jmax (1.0f, m.decaySecs * fs);
+            const float decay = std::exp (-1.0f / decaySamps);
+            float amp = m.peakRatio * direct / decaySamps;
             for (int n = 0; n < kIrLengthSamples; ++n)
             {
                 ir[(size_t) n] += amp * std::cos (omega * (float) n + m.phase);
@@ -187,19 +210,56 @@ private:
             }
         }
 
-        // Add an initial transient (the direct sound) — punchier on-axis.
-        ir[0] += offAxis ? 0.5f : 1.3f;
+        // The direct sound (punchier on-axis).
+        ir[0] += direct;
 
         // 1-pole low-pass that sets the overall top-end. A HIGHER coefficient is
         // brighter, so on-axis (close to the cap) is bright and off-axis is much
-        // darker. (The previous values had this backwards, making mic position
-        // barely audible.)
+        // darker.
         const float lpCoef = offAxis ? 0.12f : 0.42f;
         float prev = 0.0f;
         for (int n = 0; n < kIrLengthSamples; ++n)
         {
             prev = prev + lpCoef * (ir[(size_t) n] - prev);
             ir[(size_t) n] = prev;
+        }
+
+        // Closed-back cab low cut: 2nd-order HP at 70 Hz keeps the bottom
+        // tight (the resonance mode supplies the thump, not sub energy).
+        {
+            juce::dsp::IIR::Filter<float> hp;
+            hp.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, 70.0f, 0.9f);
+            for (int n = 0; n < kIrLengthSamples; ++n)
+                ir[(size_t) n] = hp.processSample (ir[(size_t) n]);
+        }
+
+        // Right-channel decorrelation, part 2: rotate the phase of the mids
+        // and highs with a pair of first-order allpasses (a dual-mic'd cab is
+        // phase-aligned in the lows but drifts apart up top). |H| is unity,
+        // so the right channel's loudness and tone still match the left.
+        if (right)
+        {
+            // Single pass, corner up at 2.2 kHz: ±90° around the corner and
+            // more above, but the low/mid power band stays phase-aligned
+            // (mono-safe; L/R correlation lands near a real dual-mic pair).
+            const float t = std::tan (juce::MathConstants<float>::pi * 2200.0f / fs);
+            const float a = (1.0f - t) / (1.0f + t);
+            float x1 = 0.0f, y1 = 0.0f;
+            for (int n = 0; n < kIrLengthSamples; ++n)
+            {
+                const float x0 = ir[(size_t) n];
+                const float y0 = -a * x0 + x1 + a * y1;
+                ir[(size_t) n] = y0;
+                x1 = x0; y1 = y0;
+            }
+        }
+
+        // Fade the tail so the low resonance doesn't truncate audibly.
+        constexpr int fadeLen = 512;
+        for (int n = 0; n < fadeLen; ++n)
+        {
+            const float t = (float) n / (float) fadeLen;
+            ir[(size_t) (kIrLengthSamples - fadeLen + n)] *= 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * t));
         }
 
         return ir;
@@ -211,8 +271,10 @@ private:
 
     // [cab][axis: 0=on,1=off][variant: 0=left,1=right]
     std::array<std::array<std::array<std::array<float, kIrLengthSamples>, 2>, 2>, kNumCabs> irs {};
-    int cabIndex { 1 };       // default V30
-    float micBlend { 0.35f }; // a touch off-axis sounds better as default
+    int cabIndex { 1 };      // default V30
+    float micBlend { 0.0f }; // matches the Mic parameter default (Center) so a
+                             // fresh instance doesn't reload/crossfade the IR
+                             // on its first block
     bool bypass { false };
 };
 

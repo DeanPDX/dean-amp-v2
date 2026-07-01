@@ -179,6 +179,31 @@ target_link_libraries(DeanAmpToneTest PRIVATE
 )
 
 # ----------------------------------------------------------------------------
+# Probe tool — feeds a steady sine through each DSP stage and prints an
+# envelope/DC table tapped after every stage. For debugging stage behavior.
+# ----------------------------------------------------------------------------
+juce_add_console_app(DeanAmpProbe
+    PRODUCT_NAME "Dean Amp Probe"
+    BUNDLE_ID    com.deanaudio.deanamp.probe
+)
+juce_generate_juce_header(DeanAmpProbe)
+target_sources(DeanAmpProbe PRIVATE
+    tools/ProbeMain.cpp
+)
+target_include_directories(DeanAmpProbe PRIVATE source)
+target_compile_definitions(DeanAmpProbe PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
+target_link_libraries(DeanAmpProbe PRIVATE
+    juce::juce_dsp
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
+
+# ----------------------------------------------------------------------------
 # DI-test tool — runs a real guitar DI (or a realistic synthetic one) through
 # the processor and reports level/balance/width/sanity. Used to calibrate
 # channel loudness against a representative signal.

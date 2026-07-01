@@ -95,6 +95,7 @@ namespace
 
         // Write WAV
         auto outFile = outDir.getChildFile ("dean_" + label.toLowerCase() + ".wav");
+        outFile.deleteFile(); // FileOutputStream appends to existing files
         juce::WavAudioFormat fmt;
         if (auto* stream = outFile.createOutputStream().release())
         {
@@ -119,6 +120,19 @@ int main (int argc, char** argv)
 
     deanamp::DeanAmpProcessor p;
     p.prepareToPlay (sr, blockSize);
+
+    // Warm up the cab convolver: the IR loads on a background thread, so an
+    // offline render would otherwise start with the cab dry for ~0.5 s.
+    {
+        juce::AudioBuffer<float> warm (2, blockSize);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 50; ++i)
+        {
+            warm.clear();
+            p.processBlock (warm, midi);
+            if (i % 10 == 0) juce::Thread::sleep (20);
+        }
+    }
 
     const char* channelLabels[3] = { "Clean", "Crunch", "Lead" };
     for (int ch = 0; ch < 3; ++ch)

@@ -32,6 +32,7 @@ public:
 
         updateTone();
         envState = 0.0f;
+        sagSmoothed = 1.0f;
     }
 
     int getLatencySamples() const { return oversampler ? (int) oversampler->getLatencyInSamples() : 0; }
@@ -54,28 +55,38 @@ public:
             const float coef = s > envState ? attack : release;
             envState += coef * (s - envState);
         }
-        // Sag: high envelope reduces gain a touch (rail droop)
-        const float sag = 1.0f - juce::jlimit (0.0f, 0.25f, envState * 0.6f * masterDrive);
+        // Sag: high envelope reduces gain a touch (rail droop). Smoothed per
+        // sample below so block edges don't step the gain (audible as
+        // inharmonic sidebands on sustained notes).
+        const float sagTarget = 1.0f - juce::jlimit (0.0f, 0.3f, envState * 0.7f * masterDrive);
 
         auto osBlock = oversampler->processSamplesUp (block);
 
         const float drive = 1.0f + 2.5f * masterDrive;
 
+        float sag = sagSmoothed;
         for (size_t ch = 0; ch < osBlock.getNumChannels(); ++ch)
         {
             auto* d = osBlock.getChannelPointer (ch);
             const size_t n = osBlock.getNumSamples();
+            sag = sagSmoothed;
             for (size_t i = 0; i < n; ++i)
             {
+                sag += 3.0e-4f * (sagTarget - sag);
                 float x = d[i] * drive * sag;
-                // Push-pull symmetric soft clip (power tubes clip more abruptly than
-                // preamp triodes — a sharper tanh approximates 6L6/EL34 character).
-                // tanh keeps the output bounded to ±1.0 regardless of input — no need
-                // for a follow-up hard limit, which would alias and sound ugly.
-                x = std::tanh (x * 0.9f);
-                d[i] = x * 0.55f;
+                // Slight bias asymmetry — a hint of 2nd harmonic at moderate
+                // levels (a push-pull pair is never perfectly matched). The
+                // term is bounded (~0.06|x| at large swing) and any DC it
+                // makes is removed by outputHP.
+                x += 0.06f * x * x / (1.0f + std::abs (x));
+                // Push-pull limit: power tubes + output transformer clip with
+                // a harder knee than a preamp triode. Bounded to ±1, smooth
+                // everywhere (no aliasing-prone corners).
+                const float a = std::abs (x);
+                d[i] = 0.55f * x / std::cbrt (1.0f + a * a * a);
             }
         }
+        sagSmoothed = sag;
 
         oversampler->processSamplesDown (block);
 
@@ -101,6 +112,7 @@ public:
         outputHP.reset(); outputLP.reset();
         resoFilter.reset(); presenceFilter.reset();
         envState = 0.0f;
+        sagSmoothed = 1.0f;
     }
 
 private:
@@ -119,6 +131,7 @@ private:
     double sr { 0.0 };
     float presence { 0.5f }, resonance { 0.5f }, masterDrive { 0.5f };
     float envState { 0.0f };
+    float sagSmoothed { 1.0f };
 
     juce::dsp::IIR::Filter<float> outputHP, outputLP, resoFilter, presenceFilter;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
