@@ -79,6 +79,37 @@ namespace
             par->setValueNotifyingHost (norm);
     }
 
+    // Neutral settings: knobs at noon, gate open, unity output, reverb off —
+    // the loudness stats calibrate the dry amp, so the DEPTH knob (spring
+    // reverb) must not add energy on top.
+    void setNeutralParams (deanamp::DeanAmpProcessor& p, int chan, float gainNorm)
+    {
+        setChoice (p, "channel", chan);
+        setChoice (p, "cab", 1); setChoice (p, "voicing", 0); setChoice (p, "mic", 0);
+        for (auto id : { "gain","bass","mid","treble","presence","master" }) setVal (p, id, 0.5f);
+        setVal (p, "gain", gainNorm);
+        setVal (p, "resonance", 0.0f); // DEPTH / spring reverb off
+        // input/output 0 dB on a -12..12 / -36..12 range; gate fully open at -80
+        if (auto* par = p.apvts.getParameter ("input"))  par->setValueNotifyingHost (par->convertTo0to1 (0.0f));
+        if (auto* par = p.apvts.getParameter ("output")) par->setValueNotifyingHost (par->convertTo0to1 (0.0f));
+        if (auto* par = p.apvts.getParameter ("gate"))   par->setValueNotifyingHost (par->convertTo0to1 (-80.0f));
+    }
+
+    void renderThrough (deanamp::DeanAmpProcessor& p, juce::AudioBuffer<float>& buf)
+    {
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> work (2, kBlock);
+        const int N = buf.getNumSamples();
+        for (int start = 0; start < N; start += kBlock)
+        {
+            const int n = juce::jmin (kBlock, N - start);
+            work.setSize (2, n, false, false, true);
+            for (int ch = 0; ch < 2; ++ch) work.copyFrom (ch, 0, buf, ch, start, n);
+            p.processBlock (work, midi);
+            for (int ch = 0; ch < 2; ++ch) buf.copyFrom (ch, start, work, ch, 0, n);
+        }
+    }
+
     struct ChannelStats { float peakDbV, activeRmsDb, corr; bool sane; };
 
     // RMS of the "played" portion only (samples above -45 dBFS), so silent gaps
@@ -102,30 +133,13 @@ namespace
                              const juce::AudioBuffer<float>& di, const juce::File& outDir,
                              float gainNorm = 0.5f)
     {
-        // Neutral settings: knobs at noon, gate open, unity output.
-        setChoice (p, "channel", chan);
-        setChoice (p, "cab", 1); setChoice (p, "voicing", 0); setChoice (p, "mic", 0);
-        for (auto id : { "gain","bass","mid","treble","presence","resonance","master" }) setVal (p, id, 0.5f);
-        setVal (p, "gain", gainNorm);
-        // input/output 0 dB on a -12..12 / -36..12 range; gate fully open at -80
-        if (auto* par = p.apvts.getParameter ("input"))  par->setValueNotifyingHost (par->convertTo0to1 (0.0f));
-        if (auto* par = p.apvts.getParameter ("output")) par->setValueNotifyingHost (par->convertTo0to1 (0.0f));
-        if (auto* par = p.apvts.getParameter ("gate"))   par->setValueNotifyingHost (par->convertTo0to1 (-80.0f));
+        setNeutralParams (p, chan, gainNorm);
 
         const int N = di.getNumSamples();
         juce::AudioBuffer<float> buf (2, N);
         for (int ch = 0; ch < 2; ++ch) buf.copyFrom (ch, 0, di, 0, 0, N);
 
-        juce::MidiBuffer midi;
-        juce::AudioBuffer<float> work (2, kBlock);
-        for (int start = 0; start < N; start += kBlock)
-        {
-            const int n = juce::jmin (kBlock, N - start);
-            work.setSize (2, n, false, false, true);
-            for (int ch = 0; ch < 2; ++ch) work.copyFrom (ch, 0, buf, ch, start, n);
-            p.processBlock (work, midi);
-            for (int ch = 0; ch < 2; ++ch) buf.copyFrom (ch, start, work, ch, 0, n);
-        }
+        renderThrough (p, buf);
 
         // Sanity: NaN/Inf check.
         bool sane = true;
@@ -234,6 +248,136 @@ int main (int argc, char** argv)
     // Stereo cab produces width (L/R not perfectly correlated) on the driven channels.
     check (s[1].corr < 0.99f, "Crunch has stereo width (corr " + juce::String (s[1].corr,3) + ")");
     check (s[2].corr < 0.97f, "Lead has stereo width (corr "   + juce::String (s[2].corr,3) + ")");
+
+    // ---- Spring reverb (DEPTH knob) -----------------------------------------
+    // Render a short pluck then silence: past the pluck (and the cab's short IR
+    // tail) the output is pure wet signal, so tail level and decay rate can be
+    // measured directly. Two renders: DEPTH 10 (tail expected) and DEPTH 0
+    // (tail must be gone).
+    {
+        const int burstN = (int) (kSr * 0.5);
+        const int totalN = (int) (kSr * 4.0);
+
+        auto windowRmsDb = [] (const juce::AudioBuffer<float>& b, double t0, double t1)
+        {
+            const int i0 = (int) (t0 * kSr);
+            const int i1 = juce::jmin ((int) (t1 * kSr), b.getNumSamples());
+            double sum = 0.0; long long cnt = 0;
+            for (int ch = 0; ch < b.getNumChannels(); ++ch)
+                for (int i = i0; i < i1; ++i) { const float v = b.getSample (ch, i); sum += v * (double) v; ++cnt; }
+            return (float) juce::Decibels::gainToDecibels (
+                std::sqrt (sum / (double) juce::jmax ((long long) 1, cnt)), -120.0);
+        };
+
+        auto renderBurst = [&] (float depth)
+        {
+            deanamp::DeanAmpProcessor rp; // fresh instance — no leftover tank state
+            rp.prepareToPlay (kSr, kBlock);
+            { // cab convolver warm-up (the IR loads on a background thread)
+                juce::AudioBuffer<float> warm (2, kBlock); juce::MidiBuffer m;
+                for (int i = 0; i < 50; ++i)
+                { warm.clear(); rp.processBlock (warm, m); if (i % 10 == 0) juce::Thread::sleep (20); }
+            }
+            setNeutralParams (rp, 0, 0.5f); // Clean channel
+            setVal (rp, "resonance", depth);
+
+            juce::AudioBuffer<float> buf (2, totalN);
+            buf.clear();
+            for (int i = 0; i < burstN; ++i) // synthetic low-E pluck, faded out over the last 10 ms
+            {
+                const float t   = (float) i / (float) kSr;
+                const float env = std::exp (-t * 6.0f);
+                float v = 0.16f * env * (std::sin (juce::MathConstants<float>::twoPi *  82.41f * t)
+                                + 0.4f * std::sin (juce::MathConstants<float>::twoPi * 164.82f * t)
+                                + 0.2f * std::sin (juce::MathConstants<float>::twoPi * 247.23f * t));
+                v *= juce::jmin (1.0f, (float) (burstN - i) / (0.01f * (float) kSr));
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            renderThrough (rp, buf);
+            return buf;
+        };
+
+        const auto wetBuf = renderBurst (1.0f);
+        const auto dryBuf = renderBurst (0.0f);
+
+        bool saneWet = true;
+        for (int ch = 0; ch < 2 && saneWet; ++ch)
+            for (int i = 0; i < totalN; ++i)
+                if (! std::isfinite (wetBuf.getSample (ch, i))) { saneWet = false; break; }
+
+        const float burstDb = windowRmsDb (wetBuf, 0.05, 0.5);
+        const float burstDry= windowRmsDb (dryBuf, 0.05, 0.5);
+        const float tail1Db = windowRmsDb (wetBuf, 0.7,  1.2);   // pure tail, early
+        const float tail2Db = windowRmsDb (wetBuf, 1.7,  2.2);   // one second later
+        const float dryTail = windowRmsDb (dryBuf, 0.7,  1.2);
+        const float slope   = tail1Db - tail2Db;                 // dB per second
+        const float t60     = slope > 0.1f ? 60.0f / slope : 999.0f;
+
+        // While-playing wet amount: total level rises by 10·log10(1+(wet/dry)²)
+        // when the (uncorrelated) wet is added — so the depth-1-vs-depth-0
+        // delta during the burst converts to a wet/dry ratio.
+        const float addDb    = burstDb - burstDry;
+        const float wetOverDry = std::sqrt (juce::jmax (0.0f,
+            std::pow (10.0f, addDb / 10.0f) - 1.0f));
+        const float wetRelDb = juce::Decibels::gainToDecibels (wetOverDry, -120.0f);
+
+        std::cout << "\nSpring reverb (DEPTH knob):\n"
+                  << "  burst=" << juce::String (burstDb, 1) << "dB"
+                  << "  wet-while-playing=" << juce::String (wetRelDb, 1) << "dB rel dry"
+                  << "  tail@0.95s=" << juce::String (tail1Db, 1) << "dB"
+                  << "  decay=" << juce::String (slope, 1) << " dB/s"
+                  << "  T60~" << juce::String (t60, 2) << "s"
+                  << "  depth-0 tail=" << juce::String (dryTail, 1) << "dB\n";
+
+        // Audition file: pluck + tail at full depth.
+        auto revFile = outDir.getChildFile ("reverb_burst.wav");
+        revFile.deleteFile(); // FileOutputStream appends to existing files
+        juce::WavAudioFormat fmt;
+        if (auto* stream = revFile.createOutputStream().release())
+        {
+            std::unique_ptr<juce::AudioFormatWriter> writer (fmt.createWriterFor (stream, kSr, 2, 24, {}, 0));
+            if (writer) writer->writeFromAudioSampleBuffer (wetBuf, 0, totalN);
+        }
+
+        check (saneWet,                    "Reverb: finite output at full depth");
+        check (tail1Db > -60.0f,           "Reverb: audible tail at full depth (tail " + juce::String (tail1Db, 1) + " dB)");
+        check (t60 > 1.0f && t60 < 3.5f,   "Reverb: spring-like decay (T60 " + juce::String (t60, 2) + " s)");
+        check (dryTail < -70.0f,           "Reverb: DEPTH 0 leaves no tail (" + juce::String (dryTail, 1) + " dB)");
+
+        // Audition renders of the real DI: Clean channel with the DEPTH knob at
+        // 5 (musical) and 10 (full drench), plus 3 s of silence so the final
+        // tail rings out.
+        for (float depth : { 0.5f, 1.0f })
+        {
+            deanamp::DeanAmpProcessor rp;
+            rp.prepareToPlay (kSr, kBlock);
+            { // cab convolver warm-up (the IR loads on a background thread)
+                juce::AudioBuffer<float> warm (2, kBlock); juce::MidiBuffer m;
+                for (int i = 0; i < 50; ++i)
+                { warm.clear(); rp.processBlock (warm, m); if (i % 10 == 0) juce::Thread::sleep (20); }
+            }
+            setNeutralParams (rp, 0, 0.5f); // Clean channel
+            setVal (rp, "resonance", depth);
+
+            const int N = di.getNumSamples();
+            juce::AudioBuffer<float> full (2, N + (int) (kSr * 3.0));
+            full.clear();
+            for (int ch = 0; ch < 2; ++ch) full.copyFrom (ch, 0, di, 0, 0, N);
+            renderThrough (rp, full);
+
+            auto diRevFile = outDir.getChildFile (
+                "di_clean_reverb" + juce::String (juce::roundToInt (depth * 10.0f)) + ".wav");
+            diRevFile.deleteFile(); // FileOutputStream appends to existing files
+            if (auto* stream = diRevFile.createOutputStream().release())
+            {
+                std::unique_ptr<juce::AudioFormatWriter> writer (
+                    fmt.createWriterFor (stream, kSr, 2, 24, {}, 0));
+                if (writer) writer->writeFromAudioSampleBuffer (full, 0, full.getNumSamples());
+            }
+            std::cout << "  wrote " << diRevFile.getFullPathName() << "\n";
+        }
+    }
 
     std::cout << (failures == 0 ? "\nALL CHECKS PASSED\n" : "\n" + juce::String (failures) + " CHECK(S) FAILED\n");
     juce::ignoreUnused (argc, argv);

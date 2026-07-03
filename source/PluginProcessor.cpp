@@ -63,8 +63,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeanAmpProcessor::createLayo
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::presence, 1 }, "Presence", NormalisableRange<float> (0.0f, 1.0f), 0.50f,
         AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
+    // DEPTH knob → spring reverb amount. The ID string stays "resonance"
+    // (its original job) so saved sessions/presets keep mapping to this knob.
     p.push_back (std::make_unique<FParam> (
-        ParameterID { pid::resonance, 1 }, "Resonance", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
+        ParameterID { pid::resonance, 1 }, "Reverb", NormalisableRange<float> (0.0f, 1.0f), 0.2f,
         AudioParameterFloatAttributes().withStringFromValueFunction ([ten](float v, int){ return ten(v); })));
     p.push_back (std::make_unique<FParam> (
         ParameterID { pid::master, 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
@@ -135,6 +137,7 @@ void DeanAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     auto cabSpec = spec;
     cabSpec.numChannels = 2;
     cab.prepare (cabSpec);
+    reverb.prepare (cabSpec); // post-cab, so it shares the cab's stereo spec
 
     setLatencySamples (preamp.getOversamplingLatencySamples() + powerAmp.getLatencySamples());
     updateFromParams();
@@ -149,7 +152,7 @@ void DeanAmpProcessor::updateFromParams()
     const float midV     = apvts.getRawParameterValue (pid::mid)->load();
     const float trebleV  = apvts.getRawParameterValue (pid::treble)->load();
     const float presV    = apvts.getRawParameterValue (pid::presence)->load();
-    const float resoV    = apvts.getRawParameterValue (pid::resonance)->load();
+    const float reverbV  = apvts.getRawParameterValue (pid::resonance)->load(); // DEPTH knob
     const float masterV  = apvts.getRawParameterValue (pid::master)->load();
     const float outDb    = apvts.getRawParameterValue (pid::output)->load();
     const int   micIdx   = (int) apvts.getRawParameterValue (pid::mic)->load();
@@ -173,8 +176,9 @@ void DeanAmpProcessor::updateFromParams()
     toneStack.setTreble  (trebleV);
 
     powerAmp.setPresence    (presV);
-    powerAmp.setResonance   (resoV);
     powerAmp.setMasterDrive (masterV);
+
+    reverb.setAmount (reverbV);
 
     // Mic position → on-axis/off-axis IR blend (Center brightest, Off-Axis darkest).
     const float micBlend = micIdx == 0 ? 0.0f : (micIdx == 1 ? 0.6f : 1.0f);
@@ -235,6 +239,11 @@ void DeanAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         buffer.copyFrom (c, 0, buffer, 0, 0, n);
 
     cab.process (block);
+
+    // Spring reverb (DEPTH knob), post-cab: the tail rides on the finished amp
+    // tone instead of being re-saturated by the power amp, and the gate at the
+    // front of the chain can never chop it off.
+    reverb.process (block);
 
     // Post-cab level + output trim (all output channels).
     buffer.applyGain (cabLevelGain * outputTrim);

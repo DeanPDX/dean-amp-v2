@@ -8,6 +8,7 @@
 #include "dsp/ToneStack.h"
 #include "dsp/PowerAmp.h"
 #include "dsp/CabSim.h"
+#include "dsp/SpringReverb.h"
 
 namespace deanamp
 {
@@ -30,7 +31,7 @@ public:
     bool acceptsMidi() const override  { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.05; }
+    double getTailLengthSeconds() const override { return 3.0; } // spring reverb tail
 
     int getNumPrograms() override            { return 1; }
     int getCurrentProgram() override         { return 0; }
@@ -52,11 +53,12 @@ public:
 private:
     void updateFromParams();
 
-    NoiseGate   gate;
-    TubePreamp  preamp;
-    ToneStack   toneStack;
-    PowerAmp    powerAmp;
-    CabSim      cab;
+    NoiseGate    gate;
+    TubePreamp   preamp;
+    ToneStack    toneStack;
+    PowerAmp     powerAmp;
+    CabSim       cab;
+    SpringReverb reverb;
 
     float inputTrim { 1.0f }, outputTrim { 1.0f };
     float cabLevelGain { 1.0f };

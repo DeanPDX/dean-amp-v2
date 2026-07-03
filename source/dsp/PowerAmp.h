@@ -10,7 +10,7 @@ namespace deanamp
  *  - Symmetric soft clip (push-pull cancels even harmonics in the output transformer)
  *  - Sag: envelope-controlled gain droop simulating B+ rail dip under load
  *  - Presence: HF shelf in the negative feedback loop — modeled as a post-stage HF tilt
- *  - Resonance: LF resonance peak from the speaker/output-transformer interaction
+ *  - Resonance: fixed LF resonance peak from the speaker/output-transformer interaction
  *  - Output transformer HF rolloff
  */
 class PowerAmp
@@ -38,7 +38,6 @@ public:
     int getLatencySamples() const { return oversampler ? (int) oversampler->getLatencyInSamples() : 0; }
 
     void setPresence  (float v01) { presence  = v01; updateTone(); }
-    void setResonance (float v01) { resonance = v01; updateTone(); }
     void setMasterDrive (float v01) { masterDrive = v01; } // power-tube drive amount (sag + saturation)
 
     void process (juce::dsp::AudioBlock<float>& block)
@@ -119,7 +118,9 @@ private:
     void updateTone()
     {
         if (sr <= 0.0) return;
-        const float resoDb = juce::jmap (resonance, 0.0f, 1.0f, -2.0f, 8.0f);
+        // The LF resonance bump was knob-driven until the DEPTH knob was
+        // repurposed for the spring reverb; it sits at its old default now.
+        const float resoDb = 2.5f;
         const float presDb = juce::jmap (presence,  0.0f, 1.0f, -4.0f, 8.0f);
 
         resoFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (
@@ -129,7 +130,7 @@ private:
     }
 
     double sr { 0.0 };
-    float presence { 0.5f }, resonance { 0.5f }, masterDrive { 0.5f };
+    float presence { 0.5f }, masterDrive { 0.5f };
     float envState { 0.0f };
     float sagSmoothed { 1.0f };
 

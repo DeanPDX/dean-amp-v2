@@ -41,7 +41,7 @@ DeanAmpEditor::DeanAmpEditor (DeanAmpProcessor& p)
         { "treble",    0.5195f, layout::kFaceY, layout::kFaceVy, 0.052f, Ten },
         { "presence",  0.5846f, layout::kFaceY, layout::kFaceVy, 0.052f, Ten },
         { "master",    0.6497f, layout::kFaceY, layout::kFaceVy, 0.052f, Ten },
-        { "resonance", 0.7148f, layout::kFaceY, layout::kFaceVy, 0.052f, Ten },  // "DEPTH"
+        { "resonance", 0.7148f, layout::kFaceY, layout::kFaceVy, 0.052f, Ten },  // "DEPTH" — spring reverb amount
         // Top row (input / gate / output) — dB params (baked knobs are a touch larger)
         { "input",     0.0990f, 0.196f, layout::kTopVy, 0.060f, Decibels },
         { "gate",      0.1999f, 0.196f, layout::kTopVy, 0.060f, Decibels },
